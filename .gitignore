@@ -1,0 +1,27 @@
+# Local/runtime state
+.omx/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# POC runtime data
+/data/
+
+# Secrets/local env
+.env
+*.local
+
+# macOS
+.DS_Store
+
+# Generated POC runtime artifacts inside backend folder
+backend/data/poc_music_scene.db
+backend/data/poc_preference.json
+backend/data/*scene_vectors*.npy
+
+# R local history
+.Rhistory
+backend/__pycache__/
