@@ -33,13 +33,14 @@ class StableHistoryBooster:
 
     The scorer builds several bucket levels from historical listen rows:
 
-    1. user + weekday + time_slot + activity + place
-    2. user + weekday + time_slot + activity
-    3. user + weekday + time_slot
-    4. user + time_slot
-    5. user global
-    6. profile/time-slot cohort
-    7. global
+    1. user + weekday + time_slot + activity + geo cluster
+    2. user + weekday + time_slot + activity + place
+    3. user + weekday + time_slot + activity
+    4. user + weekday + time_slot
+    5. user + time_slot
+    6. user global
+    7. profile/time-slot cohort
+    8. global
 
     Each level is shrinkage-smoothed by evidence count, so a tiny bucket cannot
     dominate the decision.
@@ -66,6 +67,13 @@ class StableHistoryBooster:
             return "任意"
         return place
 
+    def _geo_token(self, row: Dict[str, Any]) -> str:
+        status = _s(row.get("geo_cluster_status"))
+        cluster_id = _s(row.get("geo_cluster_id"))
+        if not cluster_id or status in {"", "unavailable", "invalid", "low_accuracy"}:
+            return "任意"
+        return cluster_id
+
     def _activity_token(self, row: Dict[str, Any]) -> str:
         available = _s(row.get("activity_state_available"))
         activity = _s(row.get("activity_state")) or "任意"
@@ -88,8 +96,10 @@ class StableHistoryBooster:
         slot = self._time_slot(row)
         activity = self._activity_token(row)
         place = self._place_token(row)
+        geo = self._geo_token(row)
         profile = self._profile(row)
         return [
+            ("u_w_t_a_g", user, weekday, slot, activity, geo),
             ("u_w_t_a_p", user, weekday, slot, activity, place),
             ("u_w_t_a", user, weekday, slot, activity),
             ("u_w_t", user, weekday, slot),
@@ -132,7 +142,7 @@ class StableHistoryBooster:
         return scores
 
     def score_all(self, row: Dict[str, Any]) -> Dict[str, float]:
-        level_weights = [0.32, 0.22, 0.18, 0.12, 0.08, 0.05, 0.03]
+        level_weights = [0.24, 0.22, 0.18, 0.13, 0.09, 0.07, 0.04, 0.03]
         scores = {scene: 0.0 for scene in SCENE_NAMES}
         used_weight = 0.0
         for weight, key in zip(level_weights, self._keys(row)):
@@ -150,3 +160,4 @@ class StableHistoryBooster:
     def boost(self, base_scores: Dict[str, float], row: Dict[str, Any], amount: float = 1.2) -> Dict[str, float]:
         history = self.score_all(row)
         return {scene: base_scores.get(scene, 0.0) + amount * history.get(scene, 0.0) for scene in SCENE_NAMES}
+
