@@ -51,6 +51,9 @@
 | `place_type_available` | int | 建议 | `1` / `0` | 0 表示拿不到 |
 | `place_type_confidence` | float | 强烈建议 | `0.72` | 0-1，低置信后端会降权 |
 | `place_type_quality` | string | 建议 | `exact_or_good_mapping` / `noisy_mapping` | 标记映射质量 |
+| `latitude` | float | 可选 | `31.2304` | 可选增强，用于用户自己的常去地点聚类 |
+| `longitude` | float | 可选 | `121.4737` | 可选增强，用于用户自己的常去地点聚类 |
+| `location_accuracy_m` | float | 可选 | `35.0` | 定位水平精度，过低精度会跳过聚类 |
 
 内部枚举建议：
 
@@ -71,6 +74,15 @@ place_type_quality = exact_or_good_mapping / noisy_mapping / unavailable
 - `place_type_confidence < 0.55`：地点只作为弱信号。
 - `place_type_quality=noisy_mapping`：不进入细分历史 bucket。
 - `place_type_available=0`：按缺失处理。
+
+经纬度增强说明：
+
+- 经纬度不是必填，第一版只传 `place_type` 也可以跑。
+- 如果前端能拿到经纬度，建议只在用户授权后传 `latitude`、`longitude`、`location_accuracy_m`。
+- 后端不会把原始经纬度作为硬规则，而是按 `user_id` 聚成用户自己的常去地点簇，例如 `geo_1`、`geo_2`。
+- `location_accuracy_m > 250` 时后端会跳过聚类，避免低精度污染历史。
+- `geo_cluster_id` 会参与长期 history bucket，用来学习“这个用户在这个常去地点通常听什么”。
+- 出差/新地点通常会形成 `geo_cluster_status=new`，可作为 routine 偏离的 debug 信号。
 
 ## 4. 运动与健康字段
 
