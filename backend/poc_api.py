@@ -34,6 +34,12 @@ class ContextPayload(BaseModel):
     place_type_available: Optional[int] = None
     place_type_confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
     place_type_quality: Optional[str] = None
+    latitude: Optional[float] = Field(None, ge=-90.0, le=90.0)
+    longitude: Optional[float] = Field(None, ge=-180.0, le=180.0)
+    lat: Optional[float] = Field(None, ge=-90.0, le=90.0)
+    lon: Optional[float] = Field(None, ge=-180.0, le=180.0)
+    horizontal_accuracy_m: Optional[float] = Field(None, ge=0.0)
+    location_accuracy_m: Optional[float] = Field(None, ge=0.0)
 
     activity_state: Optional[str] = None
     activity_state_available: Optional[int] = None
@@ -119,6 +125,12 @@ def _as_context_dict(context: ContextPayload) -> Dict[str, Any]:
     data.setdefault("noise_class", "普通")
     data.setdefault("bluetooth", "任意")
     data.setdefault("network", "wifi")
+    if "latitude" not in data and "lat" in data:
+        data["latitude"] = data["lat"]
+    if "longitude" not in data and "lon" in data:
+        data["longitude"] = data["lon"]
+    if "location_accuracy_m" not in data and "horizontal_accuracy_m" in data:
+        data["location_accuracy_m"] = data["horizontal_accuracy_m"]
     if not data.get("initial_need") and isinstance(data.get("initial_needs"), list):
         data["initial_need"] = "、".join(str(item) for item in data["initial_needs"] if item)
     return data
@@ -153,6 +165,10 @@ def _availability_notes(context: Dict[str, Any]) -> List[str]:
         notes.append("calendar absent; treated as missing, not negative")
     if not context.get("app_event"):
         notes.append("app_event absent; treated as missing, not negative")
+    if context.get("geo_cluster_status") == "new":
+        notes.append("new geo cluster for this user; may indicate travel or a new routine place")
+    elif context.get("geo_cluster_status") == "low_accuracy":
+        notes.append("location accuracy too low; geo clustering skipped")
     return notes
 
 
@@ -168,6 +184,16 @@ class RecommenderService:
         self.history.fit(self.storage.load_history_rows())
         self.semantic = None
         self.semantic_mode = os.getenv("POC_SEMANTIC", "none")
+
+    def _attach_geo_cluster(self, user_id: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        geo = self.storage.assign_geo_cluster(
+            user_id=user_id,
+            lat=context.get("latitude"),
+            lon=context.get("longitude"),
+            accuracy_m=context.get("location_accuracy_m"),
+        )
+        context.update({k: v for k, v in geo.items() if v is not None})
+        return context
 
     def _semantic_scores(self, context: Dict[str, Any]) -> Dict[str, float]:
         if self.semantic_mode in {"", "none", "off"}:
@@ -188,6 +214,7 @@ class RecommenderService:
         request_id = request.request_id or str(uuid.uuid4())
         context = _as_context_dict(request.context)
         context["user_id"] = request.user_id
+        context = self._attach_geo_cluster(request.user_id, context)
 
         rule_scores = self.rule.score_all(context)
         preference_scores = self.preference.score_all(context)
@@ -259,6 +286,7 @@ class RecommenderService:
             context = self.storage.latest_context_for_request(request.request_id, request.user_id)
         context = context or {"hour": 12, "place_type": "任意", "activity_state": "任意"}
         context["user_id"] = request.user_id
+        context = self._attach_geo_cluster(request.user_id, context)
 
         if request.event_type == "impression":
             feedback_payload = request.dict(exclude_none=True)
@@ -343,3 +371,4 @@ def feedback(request: FeedbackRequest):
 @app.get("/v1/users/{user_id}/history")
 def user_history(user_id: str):
     return service.storage.feedback_summary(user_id)
+
