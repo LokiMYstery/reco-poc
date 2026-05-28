@@ -1,24 +1,8 @@
 # 前端需要传给推荐后端的字段清单
 
-本文基于 `backend/poc_api.py`、`backend/rule_scorer.py`、`backend/preference_scorer.py`、`backend/history_booster.py`、`backend/scenes.py` 以及 `backend/POC_BACKEND_API.md` / `backend/FRONTEND_CONTEXT_FIELDS.md` 整理，面向 Swift/iOS 前端实现。
+本文基于 `backend_reference/POC_BACKEND_API.md`、`backend_reference/POC_BACKEND_README.md`、`backend_reference/FRONTEND_CONTEXT_FIELDS.md` 整理，面向 Swift/iOS 前端实现。
 
 目标：前端只负责采集可观测上下文和用户行为，不在前端判断最终推荐场景；后端根据上下文、历史反馈和用户偏好输出 Top-K 场景。
-
-## 后端工作方式简述
-
-`backend` 后端是 FastAPI + SQLite 的推荐 POC：
-
-1. `/v1/recommend` 接收 `user_id`、`request_id`、`top_k` 和 `context`。
-2. 后端补全缺省上下文：从 `timestamp` 解析 `hour/date/weekday`，按 `hour` 补 `time_slot`，并给 `place_type/activity_state/heart_rate_zone/noise_class/bluetooth/network` 设置 missing-aware 默认值。
-3. 推荐分数由四路融合：
-   - `rule_score`：基于时间、地点、运动、健康、环境、连接、日历、App 行为、profile 的可解释规则。
-   - `semantic_score`：默认关闭；开启 `POC_SEMANTIC=embedding-proto` 后使用 embedding 原型匹配。
-   - `preference_score`：按 `user_id + context bucket + scene` 从反馈中学习个性化偏好。
-   - `history_score`：从 SQLite 历史反馈构建稳定长期习惯回退。
-4. `/v1/feedback` 写入 SQLite；除 `impression` 外，会更新 preference 和 history。`impression` 只记录曝光，返回 `learned=false`。
-
-因此前端的核心价值是作为 sensor 提供稳定上下文和真实行为反馈，而不是在前端判断场景。
-
 
 ---
 
@@ -51,14 +35,17 @@
 |---|---|---:|---:|---|---|---|
 | `timestamp` | string | P0 | 必传 | ISO8601；例 `2026-05-27T10:40:00+08:00` | 不建议缺失 | 推荐触发时间；后端可从中解析 `hour/date/weekday` |
 | `timezone` | string | P1 | 建议 | IANA timezone；例 `Asia/Shanghai` | 可不传 | 调试和日志解释用 |
-| `date` | string | P3 | 可选 | `YYYY-MM-DD`；例 `2026-05-27` | 可不传，后端可从 `timestamp` 解析 | 日期分桶/调试 |
+| `date` | string | P3 | 可选 | `YYYY-MM-DD`；例 `2026-05-27` | 可不传，后端可从 timestamp 解析 | 日期分桶/调试 |
 | `hour` | int | P1 | 建议 | `0`-`23` | 可不传，后端尝试从 timestamp 解析；默认兜底 12 | 时间规则、历史分桶 |
 | `weekday` | int/string | P1 | 建议 | 建议 `0`=周一，`6`=周日；也可 `周二` | 可不传，后端尝试从 timestamp 解析 | 周期规律 |
-| `time_slot` | string | P3 | 可选 | `早晨`、`中午`、`下午`、`傍晚`、`夜晚`、`深夜` | **建议不传**，后端会按 `hour` 自动补 | 长期历史分桶使用；若前端传，必须和后端映射一致 |
-| `place_type` | string | P1 | 建议 | `任意`、`住宅区`、`商场`、`酒店`、`餐厅`、`公园`、`写字楼`、`机场`、`图书馆`、`海边`、`户外`、`在途`、`高铁站`、`地铁站` | 没权限传 `任意` | 重要地点上下文，不传经纬度，只传类型 |
+| `time_slot` | string | P3 | 可选 | `早晨`、`中午`、`下午`、`傍晚`、`夜晚`、`深夜` | 可不传，后端可根据 `hour` 自动补 | 辅助时间语义 |
+| `place_type` | string | P1 | 建议 | `任意`、`住宅区`、`商场`、`酒店`、`餐厅`、`公园`、`写字楼`、`机场`、`图书馆`、`海边`、`户外`、`在途`、`高铁站`、`地铁站` | 没权限传 `任意` | 重要地点上下文 |
 | `place_type_available` | int | P1 | 建议 | `1` 可用，`0` 不可用 | 没权限/失败传 `0` | 标记地点信号是否可用 |
 | `place_type_confidence` | float | P1 | 强烈建议 | `0.0`-`1.0`；例 `0.72` | 不可用传 `0.0` | 低于约 `0.55` 后端会弱化地点信号 |
 | `place_type_quality` | string | P1 | 建议 | `exact_or_good_mapping`、`noisy_mapping`、`unavailable` | 不可用传 `unavailable` | 控制地点映射质量和历史 bucket 可信度 |
+| `latitude` | float | P2 | 可选 | `-90` 到 `90` | 可不传 | 可选增强，用于后端按用户聚类常去地点 |
+| `longitude` | float | P2 | 可选 | `-180` 到 `180` | 可不传 | 可选增强，用于后端按用户聚类常去地点 |
+| `location_accuracy_m` | float | P2 | 可选 | 非负数；例 `35.0` | 可不传 | 定位水平精度；过低精度后端会跳过 geo 聚类 |
 | `activity_state` | string | P2 | 有权限则传 | `任意`、`静止`、`慢速`、`中速`、`高速` | 不可用可传 `任意` 或不传 | CoreMotion 运动状态 |
 | `activity_state_available` | int | P2 | 建议 | `1` 可用，`0` 不可用 | 无权限/不可用传 `0` | 后端把不可用当 missing，不当负证据 |
 | `heart_rate_zone` | string | P2 | 有权限则传 | `任意`、`静息`、`稍高`、`高`、`波动` | 不可用传 `任意` 或不传 | HealthKit/Apple Watch 心率区间 |
@@ -79,23 +66,8 @@
 | `app_event_available` | int | P2 | 可选 | `1` 可用，`0` 不可用 | 可不传 | App 行为信号是否可用 |
 | `user_tag` | string | P3 | 可选 | `任意`、`学生`、`母婴用户`、`女性`、`养宠物` | 可传 `任意` 或不传 | 冷启动问卷主标签 |
 | `gender` | string | P3 | 可选 | `任意`、`女性`、`男性`、`不便透露` | 可传 `任意` 或不传 | 冷启动弱先验，不建议强制采集 |
-| `initial_need` | string | P3 | 可选 | `学习/工作专注`、`睡眠/午休`、`放松/减压`、`运动/健身`、`通勤/出行`、`情绪陪伴`、`家庭/照护`、`游戏娱乐`、`阅读陪伴` | 可不传 | 问卷单选主需求；如果传了它，后端直接用它做弱先验 |
-| `initial_needs` | array[string] | P3 | 可选 | 同 `initial_need`，数组形式 | 可不传 | 多选问卷结果；**新后端已显式支持**，且会在缺少 `initial_need` 时自动拼接成 `initial_need` |
-
-### 0.2.1 `time_slot` 后端自动补全规则
-
-前端第一版可以不传 `time_slot`。新后端 `_as_context_dict()` 会先从 `timestamp` 尝试解析 `hour/date/weekday`，再按 `hour` 自动补 `time_slot`：
-
-| hour 范围 | 后端补全的 `time_slot` |
-|---|---|
-| `05:00-10:59` | `早晨` |
-| `11:00-13:59` | `中午` |
-| `14:00-16:59` | `下午` |
-| `17:00-19:59` | `傍晚` |
-| `20:00-22:59` | `夜晚` |
-| `23:00-04:59` | `深夜` |
-
-建议：Swift 端传 `timestamp` + `hour` 即可；除非要和后端做一致性测试，否则不要在前端自行生成 `time_slot`。
+| `initial_need` | string | P3 | 可选 | `学习/工作专注`、`睡眠/午休`、`放松/减压`、`运动/健身`、`通勤/出行`、`情绪陪伴`、`家庭/照护`、`游戏娱乐`、`阅读陪伴` | 可不传 | 问卷单选主需求 |
+| `initial_needs` | array | P3 | 可选 | 同 `initial_need`，数组形式 | 可不传 | 问卷多选需求；后端 POC 可作为扩展字段接收 |
 
 ### 0.3 `/v1/feedback` 字段总表
 
@@ -104,7 +76,7 @@
 | `user_id` | string | P0 | 是 | 同推荐请求 `user_id` | 确保反馈写到同一个模拟用户 |
 | `request_id` | string | P0 | 否但强烈建议 | 推荐接口返回/前端生成的 request id | 后端可用它找回推荐时的 context |
 | `recommended_scene` | string | P0 | 是 | 18 个场景中文名之一，见下表 | 后端推荐给用户的场景 |
-| `accepted_scene` | string | P1 | 否但建议 | 18 个场景中文名之一 | 用户实际接受/切换后的场景；非 `impression` 不传时默认等于推荐场景；`impression` 不传则后端记为空字符串 |
+| `accepted_scene` | string | P1 | 否但建议 | 18 个场景中文名之一 | 用户实际接受/切换后的场景；不传默认等于推荐场景 |
 | `event_type` | string | P0 | 是 | `impression`、`listen`、`like`、`dislike`、`skip`、`correction` | 用户行为类型 |
 | `dwell_time_sec` | int | P1 | 建议 | 非负整数；例 `420` | 停留/播放时长，影响 reward 推断 |
 | `played_ratio_pct` | float | P1 | 可选但建议 | `0.0`-`1.0`；例 `0.82` | 播放完成比例 |
@@ -145,7 +117,18 @@
 | 第 3 步 | 地点上下文 | `place_type`、`place_type_available`、`place_type_confidence`、`place_type_quality` |
 | 第 4 步 | 运动/健康上下文 | `activity_state_available`、`activity_state`、`heart_rate_available`、`heart_rate_zone` |
 | 第 5 步 | 用户真实反馈质量 | `accepted_scene`、`dwell_time_sec`、`played_ratio_pct`、`next_action` |
-| 第 6 步 | 增强弱信号 | `app_event`、`noise_class`、`weather`、`user_tag`、`initial_need` / `initial_needs` |
+| 第 6 步 | 增强弱信号 | `latitude/longitude/location_accuracy_m`、`app_event`、`noise_class`、`weather`、`user_tag`、`initial_need(s)` |
+
+`time_slot` 统一小时映射建议：
+
+```text
+05:00-10:59 -> 早晨
+11:00-13:59 -> 中午
+14:00-16:59 -> 下午
+17:00-19:59 -> 傍晚
+20:00-22:59 -> 夜晚
+23:00-04:59 -> 深夜
+```
 
 
 ## 1. 前端需要接的后端接口
@@ -232,6 +215,9 @@
 | `place_type_available` | int | 建议 | `1` / `0` | 定位是否可用 | 标记地点是否缺失 |
 | `place_type_confidence` | float | 强烈建议 | `0.72` | 前端/地图映射置信度 | 低置信后端会降权 |
 | `place_type_quality` | string | 建议 | `exact_or_good_mapping` | 前端映射质量 | 控制是否进入细分历史 bucket |
+| `latitude` | float | 可选 | `31.2304` | CoreLocation | 用户常去地点聚类增强 |
+| `longitude` | float | 可选 | `121.4737` | CoreLocation | 用户常去地点聚类增强 |
+| `location_accuracy_m` | float | 可选 | `35.0` | CoreLocation horizontalAccuracy | 精度太差时后端跳过聚类 |
 
 地点字段拿不到时，建议这样传：
 
@@ -243,6 +229,13 @@
   "place_type_quality": "unavailable"
 }
 ```
+
+经纬度增强说明：
+
+- 经纬度不是第一版必需字段，只传 `place_type` 也能跑通。
+- 如果用户授权位置且精度较好，可以传 `latitude`、`longitude`、`location_accuracy_m`。
+- 后端会按 `user_id` 聚类为 `geo_cluster_id`，用于学习用户自己的常去地点 routine。
+- 后端不会把经纬度作为硬规则；低精度或无权限时直接跳过，不影响推荐。
 
 ### 4.2 有权限则传，没有权限要显式标记 unavailable
 
@@ -294,8 +287,8 @@
 |---|---|---:|---|---|
 | `user_tag` | string | 可选 | `学生` / `母婴用户` / `养宠物` | 单选主标签，避免过细 |
 | `gender` | string | 可选 | `女性` / `不便透露` | 不建议强制采集 |
-| `initial_need` | string | 可选 | `学习/工作专注` | 问卷单选主需求；传了它就按它做弱先验 |
-| `initial_needs` | array[string] | 可选 | `["睡眠/午休", "放松/减压"]` | 多选问卷结果；新后端显式支持，若未传 `initial_need` 会自动拼接为 `睡眠/午休、放松/减压` |
+| `initial_need` | string | 可选 | `学习/工作专注` | 问卷单选主需求 |
+| `initial_needs` | array | 可选 | `["睡眠/午休", "放松/减压"]` | 问卷多选需求；当前 POC 可作为扩展字段传 |
 
 推荐枚举：
 
@@ -319,14 +312,6 @@ initial_need / initial_needs:
 ```
 
 注意：profile 只作为冷启动辅助，不应覆盖实时上下文和真实反馈。
-
-`initial_need` 和 `initial_needs` 的关系：
-
-- 新后端代码已经显式定义 `initial_need: string` 和 `initial_needs: List[str]`。
-- 如果只传 `initial_need`，后端直接使用这个字符串做弱先验。
-- 如果只传 `initial_needs`，后端会自动执行：`initial_need = "、".join(initial_needs)`，再用拼接后的关键词做弱先验。
-- 如果两个都传，后端优先保留前端传入的 `initial_need`，不会用 `initial_needs` 覆盖它。
-- Swift POC 建议：单选问卷传 `initial_need`；多选问卷可以只传 `initial_needs`，或者同时传一个前端选出的主需求 `initial_need` + 原始多选 `initial_needs`。
 
 ---
 
@@ -431,7 +416,7 @@ wifi
 | `user_id` | string | 必须 | `u_001` | 和推荐请求同一个用户 ID |
 | `request_id` | string | 强烈建议 | `req_001` | 关联推荐上下文 |
 | `recommended_scene` | string | 必须 | `通勤` | 后端推荐给用户的场景 |
-| `accepted_scene` | string | 建议 | `跑步` | 用户最终接受/切换后的场景；非 `impression` 不传时默认等于推荐场景，`impression` 可不传 |
+| `accepted_scene` | string | 建议 | `跑步` | 用户最终接受/切换后的场景；不传则默认等于推荐场景 |
 | `event_type` | string | 必须 | `listen` | 用户行为类型 |
 | `dwell_time_sec` | int | 建议 | `420` | 停留/播放时长 |
 | `played_ratio_pct` | float | 可选 | `0.82` | 播放完成比例，0-1 |
@@ -449,11 +434,13 @@ skip       -> 跳过
 correction -> 用户主动切换场景
 ```
 
+注意：`impression` 只记录曝光，不会更新用户偏好；真正用于学习的是 `listen`、`like`、`dislike`、`skip`、`correction` 等后续行为。
+
 ### 6.2 什么时候发 feedback
 
 | 用户行为 | 建议 event_type | recommended_scene | accepted_scene |
 |---|---|---|---|
-| 推荐卡片展示 | `impression` | 推荐场景 | 建议不传；后端记为空字符串且 `learned=false` |
+| 推荐卡片展示 | `impression` | 推荐场景 | 可不传或同推荐场景 |
 | 用户点击播放推荐场景 | `listen` | 推荐场景 | 同推荐场景 |
 | 用户收藏 | `like` | 推荐场景 | 同推荐场景 |
 | 用户跳过 | `skip` | 推荐场景 | 可不传或同推荐场景 |
@@ -590,7 +577,7 @@ next_action
 |---|---|
 | 手机号、邮箱、姓名 | POC 不需要 PII |
 | 原始音频 | 噪音只做本地分类后传 `noise_class` |
-| 精确经纬度 | 当前后端只需要 `place_type`，不需要原始位置 |
+| 未授权或低精度经纬度 | 经纬度只作为可选增强；无授权、低精度、或隐私策略不允许时不要传 |
 | `ground_truth` | 只用于离线评测，不允许前端上传 |
 | 过细敏感 profile | 优先用真实播放反馈学习 |
 
@@ -622,7 +609,7 @@ next_action
     "app_event": "打开推荐页",
     "app_event_available": 1,
     "user_tag": "学生",
-    "initial_needs": ["学习/工作专注", "阅读陪伴"]
+    "initial_need": "学习/工作专注"
   }
 }
 ```
