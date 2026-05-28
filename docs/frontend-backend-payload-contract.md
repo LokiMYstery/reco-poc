@@ -1,8 +1,10 @@
 # 前端需要传给推荐后端的字段清单
 
-本文基于 `backend_reference/POC_BACKEND_API.md`、`backend_reference/POC_BACKEND_README.md`、`backend_reference/FRONTEND_CONTEXT_FIELDS.md` 整理，面向 Swift/iOS 前端实现。
+本文基于最新后端 diff（`backend/poc_api.py`、`backend/poc_storage.py`、`backend/history_booster.py`、`backend/FRONTEND_CONTEXT_FIELDS.md`）整理，面向 Swift/iOS 前端实现。
 
 目标：前端只负责采集可观测上下文和用户行为，不在前端判断最终推荐场景；后端根据上下文、历史反馈和用户偏好输出 Top-K 场景。
+
+说明：本文是后端 payload 合同总览。iOS PoC 的产品流程以 `docs/ios-frontend-poc-spec.md` 为准；非问卷 sensor 获取/映射以 `docs/ios-poc-sensor-acquisition-spec.md` 为准；问卷以 `docs/ios-poc-questionnaire-spec.md` 为准。
 
 ---
 
@@ -38,14 +40,17 @@
 | `date` | string | P3 | 可选 | `YYYY-MM-DD`；例 `2026-05-27` | 可不传，后端可从 timestamp 解析 | 日期分桶/调试 |
 | `hour` | int | P1 | 建议 | `0`-`23` | 可不传，后端尝试从 timestamp 解析；默认兜底 12 | 时间规则、历史分桶 |
 | `weekday` | int/string | P1 | 建议 | 建议 `0`=周一，`6`=周日；也可 `周二` | 可不传，后端尝试从 timestamp 解析 | 周期规律 |
-| `time_slot` | string | P3 | 可选 | `早晨`、`中午`、`下午`、`傍晚`、`夜晚`、`深夜` | 可不传，后端可根据 `hour` 自动补 | 辅助时间语义 |
+| `time_slot` | string | P3 | 可选 | `早晨`、`中午`、`下午`、`傍晚`、`夜晚`、`深夜` | 可不传，后端可根据 `hour` 自动补 | 辅助时间语义；iOS sensor SPEC 允许前端按同一映射派生 |
 | `place_type` | string | P1 | 建议 | `任意`、`住宅区`、`商场`、`酒店`、`餐厅`、`公园`、`写字楼`、`机场`、`图书馆`、`海边`、`户外`、`在途`、`高铁站`、`地铁站` | 没权限传 `任意` | 重要地点上下文 |
 | `place_type_available` | int | P1 | 建议 | `1` 可用，`0` 不可用 | 没权限/失败传 `0` | 标记地点信号是否可用 |
 | `place_type_confidence` | float | P1 | 强烈建议 | `0.0`-`1.0`；例 `0.72` | 不可用传 `0.0` | 低于约 `0.55` 后端会弱化地点信号 |
 | `place_type_quality` | string | P1 | 建议 | `exact_or_good_mapping`、`noisy_mapping`、`unavailable` | 不可用传 `unavailable` | 控制地点映射质量和历史 bucket 可信度 |
-| `latitude` | float | P2 | 可选 | `-90` 到 `90` | 可不传 | 可选增强，用于后端按用户聚类常去地点 |
-| `longitude` | float | P2 | 可选 | `-180` 到 `180` | 可不传 | 可选增强，用于后端按用户聚类常去地点 |
-| `location_accuracy_m` | float | P2 | 可选 | 非负数；例 `35.0` | 可不传 | 定位水平精度；过低精度后端会跳过 geo 聚类 |
+| `latitude` | float | P2 | 可选 | `-90` 到 `90` | 可不传 | 可选增强，用于后端按用户聚类常去地点；推荐上传字段名 |
+| `longitude` | float | P2 | 可选 | `-180` 到 `180` | 可不传 | 可选增强，用于后端按用户聚类常去地点；推荐上传字段名 |
+| `location_accuracy_m` | float | P2 | 可选 | 非负数；例 `35.0` | 可不传 | 定位水平精度；`>250` 米后端跳过 geo 聚类；推荐上传字段名 |
+| `lat` | float | P2 | 兼容别名 | `-90` 到 `90` | 新代码建议改传 `latitude` | 后端会在缺少 `latitude` 时兼容映射为 `latitude` |
+| `lon` | float | P2 | 兼容别名 | `-180` 到 `180` | 新代码建议改传 `longitude` | 后端会在缺少 `longitude` 时兼容映射为 `longitude` |
+| `horizontal_accuracy_m` | float | P2 | 兼容别名 | 非负数 | 新代码建议改传 `location_accuracy_m` | 后端会在缺少 `location_accuracy_m` 时兼容映射为 `location_accuracy_m` |
 | `activity_state` | string | P2 | 有权限则传 | `任意`、`静止`、`慢速`、`中速`、`高速` | 不可用可传 `任意` 或不传 | CoreMotion 运动状态 |
 | `activity_state_available` | int | P2 | 建议 | `1` 可用，`0` 不可用 | 无权限/不可用传 `0` | 后端把不可用当 missing，不当负证据 |
 | `heart_rate_zone` | string | P2 | 有权限则传 | `任意`、`静息`、`稍高`、`高`、`波动` | 不可用传 `任意` 或不传 | HealthKit/Apple Watch 心率区间 |
@@ -76,7 +81,7 @@
 | `user_id` | string | P0 | 是 | 同推荐请求 `user_id` | 确保反馈写到同一个模拟用户 |
 | `request_id` | string | P0 | 否但强烈建议 | 推荐接口返回/前端生成的 request id | 后端可用它找回推荐时的 context |
 | `recommended_scene` | string | P0 | 是 | 18 个场景中文名之一，见下表 | 后端推荐给用户的场景 |
-| `accepted_scene` | string | P1 | 否但建议 | 18 个场景中文名之一 | 用户实际接受/切换后的场景；不传默认等于推荐场景 |
+| `accepted_scene` | string | P1 | 否但建议 | 18 个场景中文名之一 | 用户实际接受/切换后的场景；非 `impression` 不传时后端默认等于推荐场景；`impression` 可不传 |
 | `event_type` | string | P0 | 是 | `impression`、`listen`、`like`、`dislike`、`skip`、`correction` | 用户行为类型 |
 | `dwell_time_sec` | int | P1 | 建议 | 非负整数；例 `420` | 停留/播放时长，影响 reward 推断 |
 | `played_ratio_pct` | float | P1 | 可选但建议 | `0.0`-`1.0`；例 `0.82` | 播放完成比例 |
@@ -138,7 +143,7 @@
 | 时机 | Method | Path | 作用 |
 |---|---|---|---|
 | 打开 App、进入推荐页、需要刷新推荐时 | `POST` | `/v1/recommend` | 上传上下文，获取 Top-K 场景 |
-| 用户曝光、播放、跳过、收藏、切换场景后 | `POST` | `/v1/feedback` | 上传真实行为反馈，让后端学习偏好 |
+| 用户真实反馈/选择后 | `POST` | `/v1/feedback` | 上传真实行为反馈，让后端学习偏好；iOS PoC 首版只在选择真实场景后上报，不发 `impression` |
 
 辅助调试接口：
 
@@ -146,7 +151,7 @@
 |---|---|---|
 | `GET` | `/health` | 后端健康检查 |
 | `GET` | `/v1/scenes` | 获取 18 个场景枚举 |
-| `GET` | `/v1/users/{user_id}/history` | 查看某个测试用户历史反馈摘要 |
+| `GET` | `/v1/users/{user_id}/history` | 查看某个测试用户历史反馈摘要；最新后端会额外返回该用户的 `geo_clusters` 摘要（不含原始经纬度） |
 
 ---
 
@@ -170,6 +175,9 @@
     "place_type_available": 1,
     "place_type_confidence": 0.72,
     "place_type_quality": "exact_or_good_mapping",
+    "latitude": 31.2304,
+    "longitude": 121.4737,
+    "location_accuracy_m": 35.0,
     "activity_state": "慢速",
     "activity_state_available": 1,
     "heart_rate_zone": "任意",
@@ -215,9 +223,11 @@
 | `place_type_available` | int | 建议 | `1` / `0` | 定位是否可用 | 标记地点是否缺失 |
 | `place_type_confidence` | float | 强烈建议 | `0.72` | 前端/地图映射置信度 | 低置信后端会降权 |
 | `place_type_quality` | string | 建议 | `exact_or_good_mapping` | 前端映射质量 | 控制是否进入细分历史 bucket |
-| `latitude` | float | 可选 | `31.2304` | CoreLocation | 用户常去地点聚类增强 |
-| `longitude` | float | 可选 | `121.4737` | CoreLocation | 用户常去地点聚类增强 |
-| `location_accuracy_m` | float | 可选 | `35.0` | CoreLocation horizontalAccuracy | 精度太差时后端跳过聚类 |
+| `latitude` | float | 可选 | `31.2304` | CoreLocation | 用户常去地点聚类增强；推荐上传字段名 |
+| `longitude` | float | 可选 | `121.4737` | CoreLocation | 用户常去地点聚类增强；推荐上传字段名 |
+| `location_accuracy_m` | float | 可选 | `35.0` | CoreLocation `horizontalAccuracy` | 精度 `>250m` 时后端跳过聚类；推荐上传字段名 |
+| `lat` / `lon` | float | 兼容别名 | `31.2304` / `121.4737` | CoreLocation | 后端兼容旧字段；新前端建议统一转成 `latitude` / `longitude` |
+| `horizontal_accuracy_m` | float | 兼容别名 | `35.0` | CoreLocation `horizontalAccuracy` | 后端兼容旧字段；新前端建议统一转成 `location_accuracy_m` |
 
 地点字段拿不到时，建议这样传：
 
@@ -233,9 +243,11 @@
 经纬度增强说明：
 
 - 经纬度不是第一版必需字段，只传 `place_type` 也能跑通。
-- 如果用户授权位置且精度较好，可以传 `latitude`、`longitude`、`location_accuracy_m`。
-- 后端会按 `user_id` 聚类为 `geo_cluster_id`，用于学习用户自己的常去地点 routine。
+- 如果用户授权位置且精度较好，可以传 `latitude`、`longitude`、`location_accuracy_m`。Swift 采集层如果已有 `lat` / `lon` / `horizontal_accuracy_m`，上传层建议改名为上述三个 canonical 字段；后端也兼容旧别名。
+- 后端会按 `user_id` 聚类为 `geo_cluster_id`，用于学习用户自己的常去地点 routine；匹配半径为 `max(200m, location_accuracy_m * 1.5)`。
+- `location_accuracy_m > 250` 时后端返回/记录 `geo_cluster_status=low_accuracy` 并跳过聚类；无经纬度为 `unavailable`，越界为 `invalid`，新簇为 `new`，命中旧簇为 `known`。
 - 后端不会把经纬度作为硬规则；低精度或无权限时直接跳过，不影响推荐。
+- `geo_cluster_id` / `geo_cluster_status` 目前是后端内部增强字段，不要求前端上传；推荐响应只可能通过 `availability_notes` 暴露新地点或低精度提示。
 
 ### 4.2 有权限则传，没有权限要显式标记 unavailable
 
@@ -401,11 +413,11 @@ wifi
   "user_id": "u_001",
   "request_id": "req_001",
   "recommended_scene": "通勤",
-  "accepted_scene": "通勤",
-  "event_type": "listen",
-  "dwell_time_sec": 420,
-  "played_ratio_pct": 0.82,
-  "next_action": "继续播放"
+  "accepted_scene": "跑步",
+  "event_type": "correction",
+  "dwell_time_sec": 0,
+  "played_ratio_pct": 0.0,
+  "next_action": "用户选择真实场景"
 }
 ```
 
@@ -416,11 +428,11 @@ wifi
 | `user_id` | string | 必须 | `u_001` | 和推荐请求同一个用户 ID |
 | `request_id` | string | 强烈建议 | `req_001` | 关联推荐上下文 |
 | `recommended_scene` | string | 必须 | `通勤` | 后端推荐给用户的场景 |
-| `accepted_scene` | string | 建议 | `跑步` | 用户最终接受/切换后的场景；不传则默认等于推荐场景 |
-| `event_type` | string | 必须 | `listen` | 用户行为类型 |
-| `dwell_time_sec` | int | 建议 | `420` | 停留/播放时长 |
-| `played_ratio_pct` | float | 可选 | `0.82` | 播放完成比例，0-1 |
-| `next_action` | string | 可选 | `继续播放` / `关闭` | 后续动作描述 |
+| `accepted_scene` | string | 建议 | `跑步` | 用户最终接受/切换后的场景；非 `impression` 不传则默认等于推荐场景 |
+| `event_type` | string | 必须 | `correction` | 用户行为类型；iOS PoC 首版真实场景选择统一用 `correction` |
+| `dwell_time_sec` | int | 建议 | `0` | 停留/播放时长；真实场景标注没有播放时可传 0 |
+| `played_ratio_pct` | float | 可选 | `0.0` | 播放完成比例，0-1；真实场景标注没有播放时可传 0 |
+| `next_action` | string | 可选 | `用户选择真实场景` / `继续播放` / `关闭` | 后续动作描述 |
 | `context` | object | 可选 | 同 recommend context | 如果后端用 request_id 找不到推荐上下文，可补传 |
 
 ### 6.1 `event_type` 枚举建议
@@ -436,7 +448,11 @@ correction -> 用户主动切换场景
 
 注意：`impression` 只记录曝光，不会更新用户偏好；真正用于学习的是 `listen`、`like`、`dislike`、`skip`、`correction` 等后续行为。
 
-### 6.2 什么时候发 feedback
+本 iOS PoC 首版为了避免隐藏学习事件，**不发送 `impression`**；只在被试选择真实想要的场景后，为每个成功拿到推荐的虚拟用户发送一次 `correction`。
+
+### 6.2 通用产品什么时候发 feedback
+
+下表是后端支持的通用反馈语义；iOS PoC 首版主流程见 9.2。
 
 | 用户行为 | 建议 event_type | recommended_scene | accepted_scene |
 |---|---|---|---|
@@ -552,14 +568,13 @@ context.heart_rate_zone
 
 ### 9.2 第一版反馈闭环
 
-必须实现：
+对当前 iOS PoC 主流程，必须实现：
 
 ```text
-播放 -> /v1/feedback event_type=listen
-跳过 -> /v1/feedback event_type=skip
-收藏/喜欢 -> /v1/feedback event_type=like
-切换场景 -> /v1/feedback event_type=correction
+被试选择真实想要的场景 -> 对每个成功推荐的虚拟用户调用 /v1/feedback event_type=correction
 ```
+
+不发送 `impression`。`listen` / `skip` / `like` 等仍是后端支持的通用事件类型，但不属于本 PoC 首版主流程。
 
 推荐同时记录：
 
@@ -577,7 +592,8 @@ next_action
 |---|---|
 | 手机号、邮箱、姓名 | POC 不需要 PII |
 | 原始音频 | 噪音只做本地分类后传 `noise_class` |
-| 未授权或低精度经纬度 | 经纬度只作为可选增强；无授权、低精度、或隐私策略不允许时不要传 |
+| 未授权经纬度 | 经纬度只作为可选增强；无授权或隐私策略不允许时不要传 |
+| 低精度经纬度 | 不建议上传；即使上传，`location_accuracy_m > 250` 后端也会跳过 geo 聚类 |
 | `ground_truth` | 只用于离线评测，不允许前端上传 |
 | 过细敏感 profile | 优先用真实播放反馈学习 |
 
@@ -621,10 +637,10 @@ next_action
   "user_id": "u_full_permission",
   "request_id": "req_20260527_0001",
   "recommended_scene": "专注",
-  "accepted_scene": "专注",
-  "event_type": "listen",
-  "dwell_time_sec": 360,
-  "played_ratio_pct": 0.7,
-  "next_action": "继续播放"
+  "accepted_scene": "阅读",
+  "event_type": "correction",
+  "dwell_time_sec": 0,
+  "played_ratio_pct": 0.0,
+  "next_action": "用户选择真实场景"
 }
 ```
