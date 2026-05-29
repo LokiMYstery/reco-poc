@@ -1,0 +1,42 @@
+name: RecoPOC
+options:
+  bundleIdPrefix: com.recopoc
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+packages:
+  RecoPOC:
+    path: .
+targets:
+  RecoPOCHost:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Host/RecoPOCHost
+        excludes:
+          - Resources/Info.plist
+    resources:
+      - path: Host/RecoPOCHost/Resources/Assets.xcassets
+    dependencies:
+      - package: RecoPOC
+        product: RecoPOC
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.recopoc.host
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Host/RecoPOCHost/Resources/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        RECO_BACKEND_BASE_URL: ""
+schemes:
+  RecoPOCHost:
+    build:
+      targets:
+        RecoPOCHost: all
+    run:
+      config: Debug
