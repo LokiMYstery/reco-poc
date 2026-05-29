@@ -19,6 +19,8 @@ preference_scorer.py          # personalized preference scorer
 rule_scorer.py                # missing-aware rule scorer
 scenes.py                     # 18 scene definitions
 requirements_poc.txt          # POC dependencies
+poc_test_payloads.json        # fixed multi-user test payloads
+poc_smoke_test.py             # one-command smoke test
 POC_BACKEND_API.md            # detailed API documentation
 FRONTEND_CONTEXT_FIELDS.md    # frontend context field contract
 ```
@@ -242,6 +244,55 @@ For missing permissions, send explicit availability flags:
 The backend will treat these as missing signals, not negative evidence.
 
 ## 9. More Documentation
+
+## 9. Smoke Test
+
+Run an in-process smoke test with temporary SQLite files:
+
+```bash
+python3 poc_smoke_test.py
+```
+
+Run against a live server:
+
+```bash
+uvicorn poc_api:app --host 0.0.0.0 --port 8000
+python3 poc_smoke_test.py --base-url http://127.0.0.1:8000
+```
+
+The fixed payloads are in:
+
+```text
+poc_test_payloads.json
+```
+
+They cover:
+
+```text
+u_full_permission
+u_no_health_permission
+u_low_place_confidence
+u_minimal_context
+u_geo_routine
+u_travel_or_new_place
+u_low_accuracy_geo
+```
+
+The smoke test checks:
+
+```text
+/health
+/v1/scenes
+/v1/recommend
+/v1/feedback
+user_id isolation
+feedback/history update
+geo cluster reuse
+low-accuracy geo skip
+impression does not update preference
+```
+
+## 10. More Documentation
 
 For detailed request/response schemas, see:
 
