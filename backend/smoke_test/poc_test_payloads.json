@@ -1,0 +1,251 @@
+{
+  "description": "Fixed smoke-test payloads for the music scene recommendation POC backend.",
+  "cases": [
+    {
+      "name": "full_permission_commute",
+      "purpose": "Full context: place, motion, bluetooth, network, and good geo accuracy.",
+      "recommend": {
+        "user_id": "u_full_permission",
+        "request_id": "smoke_full_permission_001",
+        "top_k": 3,
+        "context": {
+          "timestamp": "2026-05-29T08:35:00+08:00",
+          "timezone": "Asia/Shanghai",
+          "hour": 8,
+          "weekday": 4,
+          "place_type": "在途",
+          "place_type_available": 1,
+          "place_type_confidence": 0.78,
+          "place_type_quality": "exact_or_good_mapping",
+          "latitude": 31.2304,
+          "longitude": 121.4737,
+          "location_accuracy_m": 35.0,
+          "activity_state": "慢速",
+          "activity_state_available": 1,
+          "heart_rate_zone": "任意",
+          "heart_rate_available": 0,
+          "noise_class": "普通",
+          "bluetooth": "耳机",
+          "network": "蜂窝数据"
+        }
+      },
+      "feedback": {
+        "event_type": "listen",
+        "accepted_scene": "通勤",
+        "dwell_time_sec": 420,
+        "played_ratio_pct": 0.82,
+        "next_action": "继续播放"
+      }
+    },
+    {
+      "name": "no_health_sleep",
+      "purpose": "No health permission: backend should still recommend using time/place/light/noise.",
+      "recommend": {
+        "user_id": "u_no_health_permission",
+        "request_id": "smoke_no_health_001",
+        "top_k": 3,
+        "context": {
+          "timestamp": "2026-05-29T22:40:00+08:00",
+          "timezone": "Asia/Shanghai",
+          "hour": 22,
+          "weekday": 4,
+          "place_type": "住宅区",
+          "place_type_available": 1,
+          "place_type_confidence": 0.83,
+          "place_type_quality": "exact_or_good_mapping",
+          "activity_state_available": 0,
+          "heart_rate_available": 0,
+          "noise_class": "安静",
+          "light_class": "暗光",
+          "bluetooth": "家用音响",
+          "network": "wifi",
+          "initial_needs": ["睡眠/午休", "放松/减压"]
+        }
+      },
+      "feedback": {
+        "event_type": "listen",
+        "accepted_scene": "深睡眠",
+        "dwell_time_sec": 900,
+        "played_ratio_pct": 0.76,
+        "next_action": "继续播放"
+      }
+    },
+    {
+      "name": "low_place_confidence_focus",
+      "purpose": "Low-confidence place: backend should downgrade place evidence instead of failing.",
+      "recommend": {
+        "user_id": "u_low_place_confidence",
+        "request_id": "smoke_low_place_001",
+        "top_k": 3,
+        "context": {
+          "timestamp": "2026-05-29T10:15:00+08:00",
+          "timezone": "Asia/Shanghai",
+          "hour": 10,
+          "weekday": 4,
+          "place_type": "商场",
+          "place_type_available": 1,
+          "place_type_confidence": 0.31,
+          "place_type_quality": "noisy_mapping",
+          "activity_state": "静止",
+          "activity_state_available": 1,
+          "heart_rate_zone": "静息",
+          "heart_rate_available": 1,
+          "noise_class": "普通",
+          "bluetooth": "耳机",
+          "network": "wifi",
+          "initial_need": "学习/工作专注"
+        }
+      },
+      "feedback": {
+        "event_type": "correction",
+        "accepted_scene": "专注",
+        "dwell_time_sec": 12,
+        "played_ratio_pct": 0.04,
+        "next_action": "用户切换场景"
+      }
+    },
+    {
+      "name": "minimal_context",
+      "purpose": "Minimal low-permission context: time, bluetooth, and network only.",
+      "recommend": {
+        "user_id": "u_minimal_context",
+        "request_id": "smoke_minimal_001",
+        "top_k": 3,
+        "context": {
+          "timestamp": "2026-05-29T19:30:00+08:00",
+          "timezone": "Asia/Shanghai",
+          "hour": 19,
+          "weekday": 4,
+          "place_type_available": 0,
+          "activity_state_available": 0,
+          "heart_rate_available": 0,
+          "bluetooth": "耳机",
+          "network": "wifi"
+        }
+      },
+      "feedback": {
+        "event_type": "listen",
+        "accepted_scene": "放松",
+        "dwell_time_sec": 360,
+        "played_ratio_pct": 0.64,
+        "next_action": "继续播放"
+      }
+    },
+    {
+      "name": "routine_geo_cluster",
+      "purpose": "Repeated similar coordinates: backend should reuse a geo cluster and let history affect ranking.",
+      "recommend": {
+        "user_id": "u_geo_routine",
+        "request_id": "smoke_geo_001",
+        "top_k": 3,
+        "context": {
+          "timestamp": "2026-05-29T09:00:00+08:00",
+          "timezone": "Asia/Shanghai",
+          "hour": 9,
+          "weekday": 4,
+          "place_type": "写字楼",
+          "place_type_available": 1,
+          "place_type_confidence": 0.86,
+          "place_type_quality": "exact_or_good_mapping",
+          "latitude": 31.2311,
+          "longitude": 121.4742,
+          "location_accuracy_m": 25.0,
+          "activity_state": "静止",
+          "activity_state_available": 1,
+          "heart_rate_zone": "静息",
+          "heart_rate_available": 1,
+          "noise_class": "普通",
+          "bluetooth": "耳机",
+          "network": "wifi",
+          "initial_need": "学习/工作专注"
+        }
+      },
+      "feedback": {
+        "event_type": "correction",
+        "accepted_scene": "专注",
+        "dwell_time_sec": 15,
+        "played_ratio_pct": 0.08,
+        "next_action": "用户切换场景"
+      },
+      "second_recommend": {
+        "request_id": "smoke_geo_002",
+        "context_updates": {
+          "timestamp": "2026-05-30T09:00:00+08:00",
+          "weekday": 5,
+          "latitude": 31.23115,
+          "longitude": 121.47425,
+          "location_accuracy_m": 22.0
+        }
+      }
+    },
+    {
+      "name": "travel_or_new_place",
+      "purpose": "New distant coordinates: backend should create a new geo cluster as a travel/new-place signal.",
+      "recommend": {
+        "user_id": "u_travel_or_new_place",
+        "request_id": "smoke_travel_001",
+        "top_k": 3,
+        "context": {
+          "timestamp": "2026-05-29T21:15:00+08:00",
+          "timezone": "Asia/Shanghai",
+          "hour": 21,
+          "weekday": 4,
+          "place_type": "酒店",
+          "place_type_available": 1,
+          "place_type_confidence": 0.74,
+          "place_type_quality": "exact_or_good_mapping",
+          "latitude": 39.9042,
+          "longitude": 116.4074,
+          "location_accuracy_m": 40.0,
+          "activity_state": "静止",
+          "activity_state_available": 1,
+          "heart_rate_available": 0,
+          "noise_class": "安静",
+          "light_class": "暗光",
+          "bluetooth": "耳机",
+          "network": "wifi"
+        }
+      },
+      "feedback": {
+        "event_type": "listen",
+        "accepted_scene": "放松",
+        "dwell_time_sec": 480,
+        "played_ratio_pct": 0.72,
+        "next_action": "继续播放"
+      }
+    },
+    {
+      "name": "low_accuracy_geo",
+      "purpose": "Low-accuracy location: backend should skip geo clustering.",
+      "recommend": {
+        "user_id": "u_low_accuracy_geo",
+        "request_id": "smoke_low_accuracy_geo_001",
+        "top_k": 3,
+        "context": {
+          "timestamp": "2026-05-29T13:00:00+08:00",
+          "timezone": "Asia/Shanghai",
+          "hour": 13,
+          "weekday": 4,
+          "place_type": "住宅区",
+          "place_type_available": 1,
+          "place_type_confidence": 0.68,
+          "place_type_quality": "exact_or_good_mapping",
+          "latitude": 31.2304,
+          "longitude": 121.4737,
+          "location_accuracy_m": 420.0,
+          "activity_state_available": 0,
+          "heart_rate_available": 0,
+          "noise_class": "普通",
+          "bluetooth": "耳机",
+          "network": "wifi"
+        }
+      },
+      "feedback": {
+        "event_type": "impression",
+        "dwell_time_sec": 0,
+        "played_ratio_pct": 0.0,
+        "next_action": "曝光"
+      }
+    }
+  ]
+}
