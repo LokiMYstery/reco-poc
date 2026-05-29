@@ -63,6 +63,12 @@ Health check:
 curl http://127.0.0.1:8000/health
 ```
 
+Quick smoke test:
+
+```bash
+python3 smoke_backend.py --base-url http://127.0.0.1:8000
+```
+
 Expected response:
 
 ```json

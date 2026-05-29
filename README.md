@@ -25,6 +25,13 @@ Health check:
 curl http://127.0.0.1:8000/health
 ```
 
+Backend smoke:
+
+```bash
+cd backend
+python3 smoke_backend.py --base-url http://127.0.0.1:8000
+```
+
 ## Frontend contract
 
 See `docs/frontend-backend-payload-contract.md`.
