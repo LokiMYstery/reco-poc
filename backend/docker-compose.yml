@@ -1,0 +1,15 @@
+services:
+  reco-poc-backend:
+    build:
+      context: .
+    image: reco-poc-backend:latest
+    container_name: reco-poc-backend
+    ports:
+      - "8000:8000"
+    environment:
+      POC_SEMANTIC: "none"
+      POC_SQLITE_PATH: /app/data/poc_music_scene.db
+      POC_PREFERENCE_PATH: /app/data/poc_preference.json
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

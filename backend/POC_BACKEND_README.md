@@ -19,6 +19,9 @@ preference_scorer.py          # personalized preference scorer
 rule_scorer.py                # missing-aware rule scorer
 scenes.py                     # 18 scene definitions
 requirements_poc.txt          # POC dependencies
+requirements_runtime.txt      # minimal default Docker/runtime dependencies
+Dockerfile                    # container image for VPS smoke testing
+docker-compose.yml            # optional Docker Compose runner
 poc_test_payloads.json        # fixed multi-user test payloads
 poc_smoke_test.py             # one-command smoke test
 POC_BACKEND_API.md            # detailed API documentation
@@ -69,6 +72,12 @@ Quick smoke test:
 
 ```bash
 python3 smoke_backend.py --base-url http://127.0.0.1:8000
+```
+
+More complete smoke test:
+
+```bash
+python3 smoke_test/poc_smoke_test.py --base-url http://127.0.0.1:8000
 ```
 
 Expected response:
@@ -249,27 +258,75 @@ For missing permissions, send explicit availability flags:
 
 The backend will treat these as missing signals, not negative evidence.
 
-## 9. More Documentation
+## 9. Docker on a VPS without a domain
 
-## 9. Smoke Test
+Use this when the code is already pulled on a VPS and you want to test by IP address plus port.
+
+Build and run:
+
+```bash
+cd backend
+docker build -t reco-poc-backend .
+docker run -d \
+  --name reco-poc-backend \
+  -p 8000:8000 \
+  -v "$PWD/data:/app/data" \
+  reco-poc-backend
+```
+
+Or with Docker Compose:
+
+```bash
+cd backend
+docker compose up -d --build
+```
+
+Test from the VPS:
+
+```bash
+curl http://127.0.0.1:8000/health
+python3 smoke_backend.py --base-url http://127.0.0.1:8000
+python3 smoke_test/poc_smoke_test.py --base-url http://127.0.0.1:8000
+```
+
+Test from your laptop, replacing the IP:
+
+```bash
+curl http://YOUR_VPS_PUBLIC_IP:8000/health
+```
+
+If laptop access fails but VPS local access works, open TCP port `8000` in the VPS firewall and cloud security group.
+
+Useful commands:
+
+```bash
+docker logs reco-poc-backend
+docker ps
+docker stop reco-poc-backend
+docker rm reco-poc-backend
+```
+
+The default Docker image uses `POC_SEMANTIC=none` and `requirements_runtime.txt` to keep the first deployment small and stable. Runtime data is stored under `backend/data` via the `./data:/app/data` volume.
+
+## 10. Smoke Test
 
 Run an in-process smoke test with temporary SQLite files:
 
 ```bash
-python3 poc_smoke_test.py
+python3 smoke_test/poc_smoke_test.py
 ```
 
 Run against a live server:
 
 ```bash
 uvicorn poc_api:app --host 0.0.0.0 --port 8000
-python3 poc_smoke_test.py --base-url http://127.0.0.1:8000
+python3 smoke_test/poc_smoke_test.py --base-url http://127.0.0.1:8000
 ```
 
 The fixed payloads are in:
 
 ```text
-poc_test_payloads.json
+smoke_test/poc_test_payloads.json
 ```
 
 They cover:
@@ -298,7 +355,7 @@ low-accuracy geo skip
 impression does not update preference
 ```
 
-## 10. More Documentation
+## 11. More Documentation
 
 For detailed request/response schemas, see:
 

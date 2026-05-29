@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime state is mounted from the host with -v ./data:/app/data.
+data/poc_music_scene.db
+data/poc_preference.json
+data/*scene_vectors*.npy
+
+.DS_Store
