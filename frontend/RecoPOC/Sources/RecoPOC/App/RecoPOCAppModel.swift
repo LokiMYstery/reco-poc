@@ -18,6 +18,8 @@ protocol RecoPOCAppModeling: ObservableObject {
     func setUserTag(_ value: String)
     func startRun()
     func selectTrueScene(_ scene: String)
+    func selectFeedbackPlayedRatioPct(_ value: Double?)
+    func selectFeedbackNextAction(_ value: String?)
     func submitFeedbackSelection()
     func retryFailedFeedbackNow()
 }
@@ -49,15 +51,21 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
                 detail: "Granting more signals here lets the experiment derive missing-permission virtual users later.",
                 isReady: false
             ),
+            capabilityGate: SetupCapabilityGateModel(
+                title: "Loading host/capability gate",
+                summary: "Resolving baseline-safe vs native-capable setup path.",
+                detail: "Setup owns permission/capability state; recommendation runs stay prompt-free.",
+                readiness: .optional
+            ),
             permissions: [
-                .init(id: "location", title: "Location / Precise Location", signalSummary: "place_type, latitude, longitude", systemStatus: "Authorized When In Use", willingness: .wouldGrant),
-                .init(id: "motion", title: "Motion & Fitness", signalSummary: "activity_state", systemStatus: "Authorized", willingness: .wouldGrant),
-                .init(id: "health", title: "HealthKit", signalSummary: "heart_rate, steps, sleep", systemStatus: "Missing entitlement / placeholder", willingness: .unsure),
-                .init(id: "microphone", title: "Microphone / Noise", signalSummary: "noise_class", systemStatus: "Not Determined", willingness: .wouldNotGrant),
-                .init(id: "calendar", title: "Calendar", signalSummary: "calendar keyword", systemStatus: "Denied", willingness: .wouldNotGrant),
-                .init(id: "audio_route", title: "Audio Route", signalSummary: "bluetooth-like output", systemStatus: "Available", willingness: .wouldGrant),
-                .init(id: "network", title: "Network", signalSummary: "wifi / cellular quality", systemStatus: "Available", willingness: .wouldGrant),
-                .init(id: "questionnaire", title: "Questionnaire Intent", signalSummary: "initial_need, initial_needs, user_tag", systemStatus: "Optional", willingness: .unsure)
+                .init(id: "location", title: "Location / Precise Location", signalSummary: "place_type, latitude, longitude", systemStatus: "Loading…", willingness: .wouldGrant),
+                .init(id: "motion", title: "Motion & Fitness", signalSummary: "activity_state", systemStatus: "Loading…", willingness: .wouldGrant),
+                .init(id: "health", title: "HealthKit", signalSummary: "heart_rate, steps, sleep", systemStatus: "Loading…", willingness: .unsure),
+                .init(id: "microphone", title: "Microphone / Noise", signalSummary: "noise_class", systemStatus: "Loading…", willingness: .wouldNotGrant),
+                .init(id: "calendar", title: "Calendar", signalSummary: "calendar keyword", systemStatus: "Loading…", willingness: .wouldNotGrant),
+                .init(id: "audio_route", title: "Audio Route", signalSummary: "bluetooth-like output", systemStatus: "Loading…", willingness: .wouldGrant),
+                .init(id: "network", title: "Network", signalSummary: "wifi / cellular quality", systemStatus: "Loading…", willingness: .wouldGrant),
+                .init(id: "questionnaire", title: "Questionnaire Intent", signalSummary: "initial_need, initial_needs, user_tag", systemStatus: "Loading…", willingness: .unsure)
             ],
             questionnaire: QuestionnaireEditorModel(
                 isSkipped: false,
@@ -71,7 +79,8 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             explanation: [
                 "The real subject should grant permissions where possible for richer raw snapshots.",
                 "Virtual users simulate online missing-data scenarios by masking one frozen snapshot.",
-                "Questionnaire intent is optional and can be edited later without blocking runs."
+                "Questionnaire intent is optional and can be edited later without blocking runs.",
+                "RunCoordinator stays prompt-free; setup owns host/capability status and permission maintenance state."
             ]
         )
 
@@ -79,6 +88,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         resultsScreen = DemoRecoPOCAppModel.makeResultsScreen(sceneOptions: SceneCatalog.names)
         diagnosticsScreen = DemoRecoPOCAppModel.makeDiagnosticsScreen()
         virtualUsers = []
+        refreshPermissionCapabilityStatuses()
         syncDerivedState()
     }
 
@@ -91,7 +101,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
 
     func requestPermissionMaintenance(for groupID: String) {
         guard let index = setupScreen.permissions.firstIndex(where: { $0.id == groupID }) else { return }
-        setupScreen.permissions[index].systemStatus = "Open in Settings / Placeholder"
+        setupScreen.permissions[index].systemStatus = container.permissionCapabilityStatusProvider.maintenanceLabel(for: groupID)
     }
 
     func updateWillingness(for groupID: String, to option: PermissionWillingnessOption) {
@@ -141,6 +151,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             .init(id: "feedback", title: "Feedback gate", detail: "Waiting for true scene selection", style: .idle)
         ]
         homeScreen.canOpenResults = false
+        resetFeedbackSelections()
 
         let users = currentVirtualUsers()
         let questionnaire = currentQuestionnaireState()
@@ -155,6 +166,14 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         resultsScreen.selectedScene = scene
     }
 
+    func selectFeedbackPlayedRatioPct(_ value: Double?) {
+        resultsScreen.feedbackQuality.selectedPlayedRatioPct = value
+    }
+
+    func selectFeedbackNextAction(_ value: String?) {
+        resultsScreen.feedbackQuality.selectedNextAction = value
+    }
+
     func submitFeedbackSelection() {
         guard
             let selectedSceneName = resultsScreen.selectedScene,
@@ -162,8 +181,18 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             let latestRunState
         else { return }
 
+        let quality = FeedbackQuality(
+            dwellTimeSec: nil,
+            playedRatioPct: resultsScreen.feedbackQuality.selectedPlayedRatioPct,
+            nextAction: resultsScreen.feedbackQuality.selectedNextAction
+        )
+
         Task {
-            let feedbackState = await runCoordinator.submitFeedback(selectedScene: selectedScene, from: latestRunState)
+            let feedbackState = await runCoordinator.submitFeedback(
+                selectedScene: selectedScene,
+                from: latestRunState,
+                quality: quality.isEmpty ? nil : quality
+            )
             applyFeedbackState(feedbackState)
         }
     }
@@ -179,6 +208,41 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
 
     private func refreshHomeBanner() {
         homeScreen.setupBanner = setupScreen.banner
+    }
+
+    private func refreshPermissionCapabilityStatuses() {
+        let snapshot = container.permissionCapabilityStatusProvider.snapshot()
+        setupScreen.capabilityGate = SetupCapabilityGateModel(
+            title: snapshot.gate.title,
+            summary: snapshot.gate.summary,
+            detail: snapshot.gate.detail,
+            readiness: readiness(from: snapshot.gate.readiness)
+        )
+
+        let statusesByID = Dictionary(uniqueKeysWithValues: snapshot.permissions.map { ($0.id, $0) })
+        for index in setupScreen.permissions.indices {
+            guard let status = statusesByID[setupScreen.permissions[index].id] else { continue }
+            setupScreen.permissions[index].systemStatus = status.statusText
+        }
+
+        setupScreen.banner.isReady = snapshot.permissions.allSatisfy { status in
+            switch status.readiness {
+            case .available, .optional:
+                return true
+            case .limited, .blocked, .requiresHost:
+                return false
+            }
+        }
+
+        if setupScreen.banner.isReady {
+            setupScreen.banner.title = "Setup ready"
+            setupScreen.banner.detail = "Baseline-safe capabilities are available for the next run."
+        } else {
+            setupScreen.banner.title = "Setup is skippable but recommended"
+            setupScreen.banner.detail = snapshot.gate.summary
+        }
+
+        refreshHomeBanner()
     }
 
     private func syncDerivedState() {
@@ -267,6 +331,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         homeScreen.latestResultsSummary = "Top-1 is ready for true-scene feedback across successful virtual users."
         homeScreen.canOpenResults = true
         resultsScreen.groups = state.results.map(resultGroup(from:))
+        resultsScreen.feedbackQuality.dwellTimeSec = nil
         diagnosticsScreen.sensorStatuses = sensorStatuses(from: state.snapshot)
         diagnosticsScreen.timingEvents = timingEvents(from: state.timingEvents)
     }
@@ -275,6 +340,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         latestRunState = state
         let status = retryStatus(from: state.retryJobs)
         resultsScreen.feedbackStatus = status
+        resultsScreen.feedbackQuality.dwellTimeSec = state.feedbackQuality?.dwellTimeSec
         homeScreen.retryStatus = status
         homeScreen.runStages = [
             .init(id: "acquire", title: "Data acquisition", detail: "Snapshot already frozen", style: .success),
@@ -343,6 +409,16 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         )
     }
 
+    private func readiness(from readiness: PermissionCapabilityReadiness) -> CapabilityReadiness {
+        switch readiness {
+        case .available: return .available
+        case .limited: return .limited
+        case .blocked: return .blocked
+        case .requiresHost: return .requiresHost
+        case .optional: return .optional
+        }
+    }
+
     private func initialNeed(from value: String?) -> InitialNeed? {
         guard let value else { return nil }
         return InitialNeed.allCases.first(where: { $0.rawValue == value })
@@ -352,11 +428,40 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         UserTag.allCases.first(where: { $0.rawValue == value })
     }
 
+
+    private func resetFeedbackSelections() {
+        resultsScreen.selectedScene = nil
+        resultsScreen.feedbackStatus = nil
+        resultsScreen.feedbackQuality = Self.defaultFeedbackQualitySelection()
+    }
+
+    private static func defaultFeedbackQualitySelection() -> FeedbackQualitySelectionModel {
+        FeedbackQualitySelectionModel(
+            dwellTimeSec: nil,
+            playedRatioPctOptions: [
+                .init(title: "Not set", value: nil),
+                .init(title: "25%", value: "0.25"),
+                .init(title: "50%", value: "0.5"),
+                .init(title: "75%", value: "0.75"),
+                .init(title: "100%", value: "1.0")
+            ],
+            selectedPlayedRatioPct: nil,
+            nextActionOptions: [
+                .init(title: "Not set", value: nil),
+                .init(title: "completed", value: "completed"),
+                .init(title: "replay", value: "replay"),
+                .init(title: "skip", value: "skip"),
+                .init(title: "exit", value: "exit")
+            ],
+            selectedNextAction: nil
+        )
+    }
+
     private static func makeHomeScreen() -> HomeRunScreenModel {
         HomeRunScreenModel(
             setupBanner: SetupBannerModel(
                 title: "Setup recommended before the first run",
-                detail: "Permission willingness and questionnaire can be edited later.",
+                detail: "Host/capability status, willingness, and questionnaire can be edited later.",
                 isReady: false
             ),
             primaryActionTitle: "Start Recommendation Run",
@@ -417,6 +522,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             ],
             sceneOptions: sceneOptions,
             selectedScene: SceneCatalog.names.last(where: { $0 == "冥想" }),
+            feedbackQuality: defaultFeedbackQualitySelection(),
             feedbackStatus: RetryStatusModel(queuedCount: 1, nextRetryLabel: "Retry in 00:27", lastError: "One feedback item is queued after a simulated timeout.")
         )
     }

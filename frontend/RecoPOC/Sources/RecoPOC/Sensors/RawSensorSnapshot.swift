@@ -28,6 +28,7 @@ public enum RawSensorName: String, Codable, CaseIterable, Hashable, Sendable {
     case health
     case microphone
     case calendar
+    case weather
 }
 
 public enum UnavailableReason: String, Codable, Equatable, Sendable {
@@ -108,6 +109,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
     public var noiseAvailable: Bool
     public var calendarKeyword: String?
     public var calendarAvailable: Bool
+    public var weather: String?
     public var appEvent: String
     public var statuses: [String: AcquisitionStatus]
 
@@ -136,6 +138,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
         noiseAvailable: Bool = false,
         calendarKeyword: String? = nil,
         calendarAvailable: Bool = false,
+        weather: String? = nil,
         appEvent: String = "打开推荐页",
         statuses: [String: AcquisitionStatus] = [:],
         startedAt: Date? = nil,
@@ -167,6 +170,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
         self.noiseAvailable = noiseAvailable
         self.calendarKeyword = calendarKeyword
         self.calendarAvailable = calendarAvailable
+        self.weather = weather
         self.appEvent = appEvent
         self.statuses = statuses
         self.startedAt = startedAt ?? capturedAt
@@ -195,6 +199,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
         let sleepQuality = Self.stringValue(for: .battery, key: "sleep_quality", in: fieldMap) ?? Self.stringValue(for: .health, key: "sleep_quality", in: fieldMap)
         let noiseClass = Self.stringValue(for: .heading, key: "noise_class", in: fieldMap) ?? Self.stringValue(for: .microphone, key: "noise_class", in: fieldMap)
         let calendarKeyword = Self.stringValue(for: .heading, key: "calendar_keyword", in: fieldMap) ?? Self.stringValue(for: .calendar, key: "calendar_keyword", in: fieldMap)
+        let weather = Self.stringValue(for: .weather, key: "weather", in: fieldMap)
         let statuses = Dictionary(uniqueKeysWithValues: sortedFields.map { ($0.name.rawValue, AcquisitionStatus($0.state.availability)) })
 
         self.init(
@@ -222,6 +227,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
             noiseAvailable: noiseClass != nil && (Self.isCaptured(fieldMap[.heading]) || Self.isCaptured(fieldMap[.microphone])),
             calendarKeyword: calendarKeyword,
             calendarAvailable: calendarKeyword != nil && (Self.isCaptured(fieldMap[.heading]) || Self.isCaptured(fieldMap[.calendar])),
+            weather: weather,
             statuses: statuses,
             startedAt: startedAt,
             frozenAt: frozenAt,

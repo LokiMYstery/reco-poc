@@ -3,10 +3,33 @@ import SwiftUI
 struct ResultsView: View {
     let model: ResultsScreenModel
     let onSelectScene: (String) -> Void
+    let onSelectPlayedRatioPct: (Double?) -> Void
+    let onSelectNextAction: (String?) -> Void
     let onSubmitFeedback: () -> Void
     let onRetryFeedbackNow: () -> Void
 
     private let sceneColumns = [GridItem(.adaptive(minimum: 90), spacing: 10)]
+
+    private var playedRatioSelection: Binding<String> {
+        Binding(
+            get: {
+                guard let value = model.feedbackQuality.selectedPlayedRatioPct else { return "unset" }
+                return String(value)
+            },
+            set: { rawValue in
+                onSelectPlayedRatioPct(rawValue == "unset" ? nil : Double(rawValue))
+            }
+        )
+    }
+
+    private var nextActionSelection: Binding<String> {
+        Binding(
+            get: { model.feedbackQuality.selectedNextAction ?? "unset" },
+            set: { rawValue in
+                onSelectNextAction(rawValue == "unset" ? nil : rawValue)
+            }
+        )
+    }
 
     var body: some View {
         List {
@@ -73,6 +96,23 @@ struct ResultsView: View {
                 if let selectedScene = model.selectedScene {
                     Text("Selected true scene: \(selectedScene)")
                         .font(.headline)
+                }
+
+                if let dwellTimeSec = model.feedbackQuality.dwellTimeSec {
+                    Text("Measured dwell time: \(dwellTimeSec) s")
+                        .foregroundStyle(.secondary)
+                }
+
+                Picker("Played ratio (optional)", selection: playedRatioSelection) {
+                    ForEach(model.feedbackQuality.playedRatioPctOptions) { option in
+                        Text(option.title).tag(option.value ?? "unset")
+                    }
+                }
+
+                Picker("Next action (optional)", selection: nextActionSelection) {
+                    ForEach(model.feedbackQuality.nextActionOptions) { option in
+                        Text(option.title).tag(option.value ?? "unset")
+                    }
                 }
 
                 Button("Submit correction feedback", action: onSubmitFeedback)

@@ -55,11 +55,40 @@ final class RunCoordinatorTests: XCTestCase {
         XCTAssertEqual(api.feedbackRequests.count, 1)
         XCTAssertEqual(api.feedbackRequests.first?.eventType, "correction")
         XCTAssertEqual(api.feedbackRequests.first?.acceptedScene, "阅读")
+        XCTAssertNotNil(api.feedbackRequests.first?.dwellTimeSec)
+        XCTAssertNil(api.feedbackRequests.first?.playedRatioPct)
+        XCTAssertNil(api.feedbackRequests.first?.nextAction)
         XCTAssertEqual(finalState.selectedTrueScene, "阅读")
         XCTAssertEqual(finalState.phase, RunPhase.completed)
         XCTAssertEqual(finalState.retryQueueCount, 0)
         XCTAssertTrue(finalState.timingEvents.map { $0.phase }.contains("true_scene_selected"))
         XCTAssertTrue(finalState.timingEvents.map { $0.phase }.contains("feedback_batch"))
+    }
+
+    func testSubmitFeedbackPreservesSelectedOptionalQualityValues() async {
+        let api = FakeRecommendationAPIClient()
+        let queue = FeedbackRetryQueue(retryDelay: 1)
+        let coordinator = RunCoordinator(
+            sensorAcquirer: FakeRawSensorAcquirer(result: .success(.sampleFullPermission)),
+            contextDeriver: VirtualContextDeriver(),
+            payloadMapper: BackendPayloadMapper(),
+            apiClient: api,
+            feedbackQueue: queue,
+            requestIDGenerator: TimestampRecommendationRequestIDGenerator()
+        )
+
+        let user = VirtualUserRegistry.defaultUsers(deviceUUID: "device-demo")[0]
+        let runState = await coordinator.runRecommendation(virtualUsers: [user], questionnaire: .sample)
+        let selectedScene = SceneCatalog.all.first { $0.name == "阅读" }!
+        let quality = FeedbackQuality(playedRatioPct: 0.75, nextAction: "completed")
+        let finalState = await coordinator.submitFeedback(selectedScene: selectedScene, from: runState, quality: quality)
+
+        XCTAssertEqual(api.feedbackRequests.count, 1)
+        XCTAssertEqual(api.feedbackRequests.first?.playedRatioPct, 0.75)
+        XCTAssertEqual(api.feedbackRequests.first?.nextAction, "completed")
+        XCTAssertNotNil(api.feedbackRequests.first?.dwellTimeSec)
+        XCTAssertEqual(finalState.feedbackQuality?.playedRatioPct, 0.75)
+        XCTAssertEqual(finalState.feedbackQuality?.nextAction, "completed")
     }
 
     func testFeedbackFailureEnqueuesRetryCountdownAndFreshCoordinatorClearsQueue() async {

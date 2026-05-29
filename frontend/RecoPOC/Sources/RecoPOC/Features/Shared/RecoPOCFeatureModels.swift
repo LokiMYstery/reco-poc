@@ -6,6 +6,21 @@ struct SetupBannerModel {
     var isReady: Bool
 }
 
+enum CapabilityReadiness: String {
+    case available = "Available"
+    case limited = "Limited"
+    case blocked = "Blocked"
+    case requiresHost = "Requires Host"
+    case optional = "Optional"
+}
+
+struct SetupCapabilityGateModel {
+    var title: String
+    var summary: String
+    var detail: String
+    var readiness: CapabilityReadiness
+}
+
 enum PermissionWillingnessOption: String, CaseIterable, Identifiable {
     case wouldGrant = "Would grant"
     case wouldNotGrant = "Would not grant"
@@ -34,6 +49,7 @@ struct QuestionnaireEditorModel {
 
 struct SetupScreenModel {
     var banner: SetupBannerModel
+    var capabilityGate: SetupCapabilityGateModel
     var permissions: [PermissionGroupRowModel]
     var questionnaire: QuestionnaireEditorModel
     var derivedUserNote: String
@@ -97,10 +113,25 @@ struct ResultGroupModel: Identifiable {
     var errorMessage: String?
 }
 
+struct FeedbackOptionModel: Identifiable, Equatable {
+    var id: String { value ?? "unset" }
+    var title: String
+    var value: String?
+}
+
+struct FeedbackQualitySelectionModel {
+    var dwellTimeSec: Int?
+    var playedRatioPctOptions: [FeedbackOptionModel]
+    var selectedPlayedRatioPct: Double?
+    var nextActionOptions: [FeedbackOptionModel]
+    var selectedNextAction: String?
+}
+
 struct ResultsScreenModel {
     var groups: [ResultGroupModel]
     var sceneOptions: [String]
     var selectedScene: String?
+    var feedbackQuality: FeedbackQualitySelectionModel
     var feedbackStatus: RetryStatusModel?
 }
 

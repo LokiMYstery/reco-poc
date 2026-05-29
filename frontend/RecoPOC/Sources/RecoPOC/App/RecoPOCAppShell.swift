@@ -48,6 +48,8 @@ struct RecoPOCAppShell<Model: RecoPOCAppModeling>: View {
                 ResultsView(
                     model: model.resultsScreen,
                     onSelectScene: model.selectTrueScene(_:),
+                    onSelectPlayedRatioPct: model.selectFeedbackPlayedRatioPct(_:),
+                    onSelectNextAction: model.selectFeedbackNextAction(_:),
                     onSubmitFeedback: model.submitFeedbackSelection,
                     onRetryFeedbackNow: model.retryFailedFeedbackNow
                 )

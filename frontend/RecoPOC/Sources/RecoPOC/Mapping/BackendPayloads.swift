@@ -58,7 +58,7 @@ public struct FeedbackRequest: Codable, Equatable, Sendable {
 
 public protocol BackendPayloadMapping: Sendable {
     func recommendPayload(context: VirtualContext, requestID: String, topK: Int) -> RecommendRequest
-    func feedbackPayload(result: RecommendationResult, acceptedScene: RecoScene) -> FeedbackRequest?
+    func feedbackPayload(result: RecommendationResult, acceptedScene: RecoScene, quality: FeedbackQuality?) -> FeedbackRequest?
 }
 
 public struct BackendPayloadMapper: BackendPayloadMapping {
@@ -73,14 +73,17 @@ public struct BackendPayloadMapper: BackendPayloadMapping {
         )
     }
 
-    public func feedbackPayload(result: RecommendationResult, acceptedScene: RecoScene) -> FeedbackRequest? {
+    public func feedbackPayload(result: RecommendationResult, acceptedScene: RecoScene, quality: FeedbackQuality? = nil) -> FeedbackRequest? {
         guard let top1 = result.topScenes.first else { return nil }
         return FeedbackRequest(
             userID: result.userID,
             requestID: result.requestID,
             recommendedScene: top1,
             acceptedScene: acceptedScene.name,
-            eventType: "correction"
+            eventType: "correction",
+            dwellTimeSec: quality?.dwellTimeSec,
+            playedRatioPct: quality?.playedRatioPct,
+            nextAction: quality?.nextAction
         )
     }
 }

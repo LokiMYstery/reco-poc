@@ -91,7 +91,7 @@ public struct SystemBaselineRawSensorAcquirer: RawSensorAcquiring {
                         observedAt: startedAt,
                         values: [
                             "timestamp": .string(Self.formatTimestamp(startedAt)),
-                            "timezone": .string(tz.identifier)
+                            "timezone": .string(tz.identifier),
                         ]
                     )
                 )
@@ -117,8 +117,13 @@ public struct SystemBaselineRawSensorAcquirer: RawSensorAcquiring {
             heartRateAvailable: false,
             noiseAvailable: false,
             calendarAvailable: false,
+            weather: nil,
             appEvent: "打开推荐页",
-            statuses: Dictionary(uniqueKeysWithValues: fields.map { ($0.name.rawValue, AcquisitionStatus($0.state.availability)) }),
+            statuses: Dictionary(
+                uniqueKeysWithValues: fields.map {
+                    ($0.name.rawValue, AcquisitionStatus($0.state.availability))
+                }
+            ),
             startedAt: startedAt,
             frozenAt: frozenAt,
             deadline: deadlineAt,
@@ -134,6 +139,31 @@ public struct SystemBaselineRawSensorAcquirer: RawSensorAcquiring {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withColonSeparatorInTimeZone]
         return formatter.string(from: date)
+    }
+}
+
+public struct NativeCapableRawSensorAcquirer: RawSensorAcquiring {
+    private let providers: [any RawSensorReadingProvider]
+    private let clock: SensorClock
+    private let scheduler: any SensorDeadlineScheduling
+
+    public init(
+        providers: [any RawSensorReadingProvider] = NativeSensorProviderCatalog().makeProviders(),
+        clock: SensorClock = SystemSensorClock(),
+        scheduler: any SensorDeadlineScheduling = TaskDeadlineScheduler()
+    ) {
+        self.providers = providers
+        self.clock = clock
+        self.scheduler = scheduler
+    }
+
+    public func acquireSnapshot(deadline: TimeInterval = RawSensorFreezer.deadlineSeconds) async -> RawSensorSnapshot {
+        await RawSensorSnapshotFreezer(
+            providers: providers,
+            clock: clock,
+            scheduler: scheduler,
+            acquisitionWindow: deadline
+        ).freeze()
     }
 }
 

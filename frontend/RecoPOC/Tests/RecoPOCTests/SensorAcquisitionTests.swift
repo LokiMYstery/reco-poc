@@ -105,6 +105,25 @@ struct SensorAcquisitionTests {
         #expect(snapshot.activityStateAvailable == false)
     }
 
+    @Test("native-capable catalog has host-gated weather without changing baseline defaults")
+    func nativeCatalogWeatherAndBaselineDefaults() async throws {
+        let start = Date(timeIntervalSince1970: 5_000)
+        let baseline = await SystemBaselineRawSensorAcquirer(
+            clock: { start },
+            timezone: { TimeZone(identifier: "Asia/Shanghai")! }
+        ).acquireSnapshot(deadline: 15)
+
+        #expect(baseline.network == "任意")
+        #expect(baseline.bluetooth == "任意")
+        #expect(baseline.weather == nil)
+        #expect(baseline.statuses[RawSensorName.weather.rawValue]?.availability == .unavailable)
+
+        let weatherProvider = try #require(
+            NativeSensorProviderCatalog().makeProviders().first { $0.sensorName == .weather }
+        )
+        #expect(await weatherProvider.read() == .unavailable(.unsupported))
+    }
+
     @Test("one run returns one frozen snapshot with omitted sensors marked unavailable")
     func omittedSensorsMarkedUnavailable() async throws {
         let start = Date(timeIntervalSince1970: 4_000)

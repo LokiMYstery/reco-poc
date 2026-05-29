@@ -139,6 +139,19 @@ final class RecoPOCContractTests: XCTestCase {
         XCTAssertNil(raw["next_action"])
     }
 
+    func testRichFeedbackPayloadFixtureIncludesOptionalQualityFields() throws {
+        let payload: RichFeedbackPayloadFixture = try loadJSON("GoldenPayloads/feedback_payload_rich.json")
+        let raw = try loadRawJSON("GoldenPayloads/feedback_payload_rich.json")
+
+        XCTAssertEqual(payload.eventType, "correction")
+        XCTAssertEqual(payload.recommendedScene, "专注")
+        XCTAssertEqual(payload.acceptedScene, "阅读")
+        XCTAssertEqual(payload.dwellTimeSec, 19)
+        XCTAssertEqual(payload.playedRatioPct, 0.75)
+        XCTAssertEqual(payload.nextAction, "completed")
+        XCTAssertNil(raw["impression"])
+    }
+
     func testFreshCoordinatorStartsWithClearedFeedbackRetryQueue() {
         let original = InMemoryFeedbackRetryQueue()
         original.enqueue(.init(requestID: "run-001:u_full_permission"))
@@ -218,6 +231,28 @@ private struct FeedbackPayloadFixture: Decodable {
         case eventType = "event_type"
         case recommendedScene = "recommended_scene"
         case acceptedScene = "accepted_scene"
+    }
+}
+
+private struct RichFeedbackPayloadFixture: Decodable {
+    let userID: String
+    let requestID: String
+    let eventType: String
+    let recommendedScene: String
+    let acceptedScene: String
+    let dwellTimeSec: Int
+    let playedRatioPct: Double
+    let nextAction: String
+
+    private enum CodingKeys: String, CodingKey {
+        case userID = "user_id"
+        case requestID = "request_id"
+        case eventType = "event_type"
+        case recommendedScene = "recommended_scene"
+        case acceptedScene = "accepted_scene"
+        case dwellTimeSec = "dwell_time_sec"
+        case playedRatioPct = "played_ratio_pct"
+        case nextAction = "next_action"
     }
 }
 

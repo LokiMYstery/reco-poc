@@ -32,6 +32,22 @@ public struct TimingEvent: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+public struct FeedbackQuality: Codable, Equatable, Sendable {
+    public var dwellTimeSec: Int?
+    public var playedRatioPct: Double?
+    public var nextAction: String?
+
+    public init(dwellTimeSec: Int? = nil, playedRatioPct: Double? = nil, nextAction: String? = nil) {
+        self.dwellTimeSec = dwellTimeSec
+        self.playedRatioPct = playedRatioPct
+        self.nextAction = nextAction
+    }
+
+    public var isEmpty: Bool {
+        dwellTimeSec == nil && playedRatioPct == nil && nextAction == nil
+    }
+}
+
 public struct RunState: Codable, Equatable, Sendable {
     public var phase: RunPhase
     public var snapshot: RawSensorSnapshot?
@@ -43,6 +59,7 @@ public struct RunState: Codable, Equatable, Sendable {
     public var timingEvents: [TimingEvent]
     public var errorMessage: String?
     public var selectedTrueScene: String?
+    public var feedbackQuality: FeedbackQuality?
 
     public init(
         phase: RunPhase,
@@ -54,7 +71,8 @@ public struct RunState: Codable, Equatable, Sendable {
         retryJobs: [FeedbackRetryJob] = [],
         timingEvents: [TimingEvent] = [],
         errorMessage: String? = nil,
-        selectedTrueScene: String? = nil
+        selectedTrueScene: String? = nil,
+        feedbackQuality: FeedbackQuality? = nil
     ) {
         self.phase = phase
         self.snapshot = snapshot
@@ -66,6 +84,7 @@ public struct RunState: Codable, Equatable, Sendable {
         self.timingEvents = timingEvents
         self.errorMessage = errorMessage
         self.selectedTrueScene = selectedTrueScene
+        self.feedbackQuality = feedbackQuality
     }
 
     public static let idle = RunState(phase: .idle)
