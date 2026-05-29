@@ -1,0 +1,12 @@
+{
+  "user_id": "device-demo:u_full_permission",
+  "request_id": "run-001:u_full_permission",
+  "top_k": 3,
+  "context": {
+    "questionnaire_available": 1,
+    "intent_available": 1,
+    "intent": "学习/工作专注",
+    "initial_need": "学习/工作专注",
+    "initial_needs": ["阅读陪伴", "放松/减压"]
+  }
+}

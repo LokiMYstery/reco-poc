@@ -1,0 +1,18 @@
+[
+  "u_full_permission",
+  "u_minimal_context",
+  "u_no_location",
+  "u_approx_location",
+  "u_location_only_no_health",
+  "u_motion_only_no_health",
+  "u_steps_only_no_hr_sleep",
+  "u_no_watch_health_partial",
+  "u_no_calendar_no_microphone",
+  "u_calendar_enabled",
+  "u_noise_enabled",
+  "u_no_bluetooth_route",
+  "u_weak_cellular_commuter",
+  "u_home_speaker_no_health",
+  "u_full_no_questionnaire",
+  "u_intent_only_minimal_context"
+]

@@ -1,0 +1,7 @@
+{
+  "user_id": "device-demo:u_full_permission",
+  "request_id": "run-001:u_full_permission",
+  "event_type": "correction",
+  "recommended_scene": "专注",
+  "accepted_scene": "阅读"
+}
