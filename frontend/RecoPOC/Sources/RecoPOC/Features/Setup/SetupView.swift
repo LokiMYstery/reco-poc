@@ -64,16 +64,23 @@ struct SetupView: View {
                   .foregroundStyle(.secondary)
               }
               Spacer()
-              Button("Maintain") {
+              Button("Check / Request") {
                 onRequestPermissionMaintenance(permission.id)
               }
               .buttonStyle(.bordered)
             }
 
             HStack(alignment: .center) {
-              Text("System: \(permission.systemStatus)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+              VStack(alignment: .leading, spacing: 2) {
+                Text("System: \(permission.systemStatus)")
+                  .font(.subheadline)
+                  .foregroundStyle(.secondary)
+                if let detail = permission.systemDetail {
+                  Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+              }
               Spacer()
             }
 

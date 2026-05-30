@@ -35,6 +35,7 @@ struct PermissionGroupRowModel: Identifiable {
     var title: String
     var signalSummary: String
     var systemStatus: String
+    var systemDetail: String?
     var willingness: PermissionWillingnessOption
 }
 

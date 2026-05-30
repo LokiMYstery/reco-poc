@@ -58,14 +58,15 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
                 readiness: .optional
             ),
             permissions: [
-                .init(id: "location", title: "Location / Precise Location", signalSummary: "place_type, latitude, longitude", systemStatus: "Loading…", willingness: .wouldGrant),
-                .init(id: "motion", title: "Motion & Fitness", signalSummary: "activity_state", systemStatus: "Loading…", willingness: .wouldGrant),
-                .init(id: "health", title: "HealthKit", signalSummary: "heart_rate, steps, sleep", systemStatus: "Loading…", willingness: .unsure),
-                .init(id: "microphone", title: "Microphone / Noise", signalSummary: "noise_class", systemStatus: "Loading…", willingness: .wouldNotGrant),
-                .init(id: "calendar", title: "Calendar", signalSummary: "calendar keyword", systemStatus: "Loading…", willingness: .wouldNotGrant),
-                .init(id: "audio_route", title: "Audio Route", signalSummary: "bluetooth-like output", systemStatus: "Loading…", willingness: .wouldGrant),
-                .init(id: "network", title: "Network", signalSummary: "wifi / cellular quality", systemStatus: "Loading…", willingness: .wouldGrant),
-                .init(id: "questionnaire", title: "Questionnaire Intent", signalSummary: "initial_need, initial_needs, user_tag", systemStatus: "Loading…", willingness: .unsure)
+                .init(id: "location", title: "Location / Precise Location", signalSummary: "place_type, latitude, longitude", systemStatus: "Loading…", systemDetail: nil, willingness: .wouldGrant),
+                .init(id: "motion", title: "Motion & Fitness", signalSummary: "activity_state", systemStatus: "Loading…", systemDetail: nil, willingness: .wouldGrant),
+                .init(id: "health", title: "HealthKit", signalSummary: "heart_rate, steps, sleep", systemStatus: "Loading…", systemDetail: nil, willingness: .unsure),
+                .init(id: "microphone", title: "Microphone / Noise", signalSummary: "noise_class", systemStatus: "Loading…", systemDetail: nil, willingness: .wouldNotGrant),
+                .init(id: "calendar", title: "Calendar", signalSummary: "calendar keyword", systemStatus: "Loading…", systemDetail: nil, willingness: .wouldNotGrant),
+                .init(id: "weather", title: "WeatherKit", signalSummary: "weather", systemStatus: "Loading…", systemDetail: nil, willingness: .wouldGrant),
+                .init(id: "audio_route", title: "Audio Route", signalSummary: "bluetooth-like output", systemStatus: "Loading…", systemDetail: nil, willingness: .wouldGrant),
+                .init(id: "network", title: "Network", signalSummary: "wifi / cellular quality", systemStatus: "Loading…", systemDetail: nil, willingness: .wouldGrant),
+                .init(id: "questionnaire", title: "Questionnaire Intent", signalSummary: "initial_need, initial_needs, user_tag", systemStatus: "Loading…", systemDetail: nil, willingness: .unsure)
             ],
             questionnaire: QuestionnaireEditorModel(
                 isSkipped: false,
@@ -80,6 +81,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
                 "The real subject should grant permissions where possible for richer raw snapshots.",
                 "Virtual users simulate online missing-data scenarios by masking one frozen snapshot.",
                 "Questionnaire intent is optional and can be edited later without blocking runs.",
+                "Tap Check / Request in Setup to show system prompts; WeatherKit is entitlement-only and has no prompt.",
                 "RunCoordinator stays prompt-free; setup owns host/capability status and permission maintenance state."
             ]
         )
@@ -101,7 +103,18 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
 
     func requestPermissionMaintenance(for groupID: String) {
         guard let index = setupScreen.permissions.firstIndex(where: { $0.id == groupID }) else { return }
-        setupScreen.permissions[index].systemStatus = container.permissionCapabilityStatusProvider.maintenanceLabel(for: groupID)
+        let provider = container.permissionCapabilityStatusProvider
+        setupScreen.permissions[index].systemStatus = provider.maintenanceLabel(for: groupID)
+        setupScreen.permissions[index].systemDetail = "Waiting for iOS authorization result…"
+
+        Task { [weak self] in
+            let status = await provider.requestMaintenance(for: groupID)
+            guard let self else { return }
+            self.refreshPermissionCapabilityStatuses()
+            guard let index = self.setupScreen.permissions.firstIndex(where: { $0.id == groupID }) else { return }
+            self.setupScreen.permissions[index].systemStatus = status.statusText
+            self.setupScreen.permissions[index].systemDetail = status.detailText
+        }
     }
 
     func updateWillingness(for groupID: String, to option: PermissionWillingnessOption) {
@@ -223,6 +236,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         for index in setupScreen.permissions.indices {
             guard let status = statusesByID[setupScreen.permissions[index].id] else { continue }
             setupScreen.permissions[index].systemStatus = status.statusText
+            setupScreen.permissions[index].systemDetail = status.detailText
         }
 
         setupScreen.banner.isReady = snapshot.permissions.allSatisfy { status in
