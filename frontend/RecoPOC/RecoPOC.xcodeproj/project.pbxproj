@@ -110,7 +110,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					64D4AC6B0A366C714998BAB9 = {
-						DevelopmentTeam = "";
+						DevelopmentTeam = BYRP6L2B45;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -164,9 +164,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = RecoPOCHost.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = BYRP6L2B45;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Host/RecoPOCHost/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -175,7 +176,7 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.recopoc.host;
-				RECO_BACKEND_BASE_URL = "";
+				RECO_BACKEND_BASE_URL = "http://66.245.216.223:8000";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -185,9 +186,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = RecoPOCHost.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = BYRP6L2B45;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Host/RecoPOCHost/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -196,7 +198,7 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.recopoc.host;
-				RECO_BACKEND_BASE_URL = "";
+				RECO_BACKEND_BASE_URL = "http://66.245.216.223:8000";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

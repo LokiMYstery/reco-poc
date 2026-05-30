@@ -43,7 +43,7 @@ Use `xcodebuild -project RecoPOC.xcodeproj -scheme RecoPOCHost -showdestinations
 
 ### Backend URL
 
-The host reads `RecoBackendBaseURL` from `Info.plist`, backed by the Xcode build setting `RECO_BACKEND_BASE_URL`. If the build setting is empty, the app falls back to `http://127.0.0.1:8000`.
+The host reads `RecoBackendBaseURL` from `Info.plist`, backed by the Xcode build setting `RECO_BACKEND_BASE_URL`. The committed Debug value currently points at `http://66.245.216.223:8000`; if the build setting is emptied, the app falls back to `http://127.0.0.1:8000`.
 
 Example override:
 
@@ -58,11 +58,11 @@ xcodebuild -project RecoPOC.xcodeproj \
   build
 ```
 
-Do not hardcode the temporary backend address in source. It may be an IP address such as `66.245.216.223` or a DNS name.
+The temporary PoC backend is currently configured as `http://66.245.216.223:8000`. When a DNS/HTTPS endpoint is available, update `RECO_BACKEND_BASE_URL` and remove the temporary IP ATS exception.
 
 ### ATS / HTTP backend note
 
-`Info.plist` currently enables local HTTP development through `NSAllowsLocalNetworking`, keeps `NSExceptionDomains` empty, and does not enable broad arbitrary loads. Once the backend host is finalized:
+`Info.plist` currently enables local HTTP development through `NSAllowsLocalNetworking`, adds a narrow HTTP exception for `66.245.216.223`, and does not enable broad arbitrary loads. Once the backend host is finalized:
 
 - HTTPS domain: no ATS exception should be needed.
 - HTTP DNS name: add a narrow exception keyed by the DNS host only.
@@ -72,4 +72,4 @@ The ATS key must not include scheme or port. For example, use `66.245.216.223`, 
 
 ### Device signing
 
-Simulator builds use `CODE_SIGNING_ALLOWED=NO`. A physical-device build still needs a real `DEVELOPMENT_TEAM` and, later, explicit capabilities/entitlements for HealthKit or WeatherKit when those adapters are enabled.
+Simulator builds can still use `CODE_SIGNING_ALLOWED=NO`. Physical-device builds use the configured Apple Developer Team in `project.yml`; if the bundle identifier conflicts under that team, change `PRODUCT_BUNDLE_IDENTIFIER` to a unique value in Xcode or `project.yml`.

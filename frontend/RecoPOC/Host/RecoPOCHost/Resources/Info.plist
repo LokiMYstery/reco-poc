@@ -20,6 +20,37 @@
 	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>66.245.216.223</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>RecoPOC may read nearby calendar events locally to upload only a normalized keyword, not full event titles.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>RecoPOC may read nearby calendar events locally to upload only a normalized keyword, not full event titles.</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>RecoPOC does not create calendar events.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>RecoPOC can read selected HealthKit samples to derive coarse wellness context when you enable it.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>RecoPOC does not write Health data; this placeholder keeps the host ready for HealthKit capability review.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>RecoPOC uses location only to derive coarse place context for recommendations when you enable it.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>RecoPOC may sample microphone levels locally to classify ambient noise; raw audio is not uploaded.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>RecoPOC uses motion activity only to derive local activity context when you enable it.</string>
+	<key>RecoBackendBaseURL</key>
+	<string>$(RECO_BACKEND_BASE_URL)</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -40,30 +71,5 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>RecoBackendBaseURL</key>
-	<string>$(RECO_BACKEND_BASE_URL)</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>RecoPOC uses location only to derive coarse place context for recommendations when you enable it.</string>
-	<key>NSMotionUsageDescription</key>
-	<string>RecoPOC uses motion activity only to derive local activity context when you enable it.</string>
-	<key>NSHealthShareUsageDescription</key>
-	<string>RecoPOC can read selected HealthKit samples to derive coarse wellness context when you enable it.</string>
-	<key>NSHealthUpdateUsageDescription</key>
-	<string>RecoPOC does not write Health data; this placeholder keeps the host ready for HealthKit capability review.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>RecoPOC may sample microphone levels locally to classify ambient noise; raw audio is not uploaded.</string>
-	<key>NSCalendarsUsageDescription</key>
-	<string>RecoPOC may read nearby calendar events locally to upload only a normalized keyword, not full event titles.</string>
-	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>RecoPOC may read nearby calendar events locally to upload only a normalized keyword, not full event titles.</string>
-	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
-	<string>RecoPOC does not create calendar events.</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSExceptionDomains</key>
-		<dict/>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
 </dict>
 </plist>
