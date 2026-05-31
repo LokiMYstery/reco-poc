@@ -24,6 +24,48 @@ protocol RecoPOCAppModeling: ObservableObject {
     func retryFailedFeedbackNow()
 }
 
+struct SetupPreferences: Codable, Equatable, Sendable {
+    var permissionWillingnessByID: [String: PermissionWillingnessOption]
+    var questionnaire: SetupQuestionnairePreferences
+}
+
+struct SetupQuestionnairePreferences: Codable, Equatable, Sendable {
+    var isSkipped: Bool
+    var primaryIntent: String?
+    var additionalNeeds: [String]
+    var userTag: String
+}
+
+protocol SetupPreferencesStoring {
+    func loadSetupPreferences() -> SetupPreferences?
+    func saveSetupPreferences(_ preferences: SetupPreferences)
+}
+
+final class UserDefaultsSetupPreferencesStore: SetupPreferencesStoring {
+    private let userDefaults: UserDefaults
+    private let key: String
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+
+    init(
+        userDefaults: UserDefaults = .standard,
+        key: String = "RecoPOC.setup.preferences.v1"
+    ) {
+        self.userDefaults = userDefaults
+        self.key = key
+    }
+
+    func loadSetupPreferences() -> SetupPreferences? {
+        guard let data = userDefaults.data(forKey: key) else { return nil }
+        return try? decoder.decode(SetupPreferences.self, from: data)
+    }
+
+    func saveSetupPreferences(_ preferences: SetupPreferences) {
+        guard let data = try? encoder.encode(preferences) else { return }
+        userDefaults.set(data, forKey: key)
+    }
+}
+
 @MainActor
 final class DemoRecoPOCAppModel: RecoPOCAppModeling {
     @Published private(set) var setupScreen: SetupScreenModel
@@ -35,12 +77,18 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
     private let container: DependencyContainer
     private let runCoordinator: RunCoordinator
     private let deviceUUID: String
+    private let setupPreferencesStore: any SetupPreferencesStoring
     private var latestRunState: RunState?
 
-    init(container: DependencyContainer = .demo(), deviceUUID: String? = nil) {
+    init(
+        container: DependencyContainer = .demo(),
+        deviceUUID: String? = nil,
+        setupPreferencesStore: any SetupPreferencesStoring = UserDefaultsSetupPreferencesStore()
+    ) {
         self.container = container
         self.runCoordinator = container.makeRunCoordinator()
         self.deviceUUID = deviceUUID ?? container.installIdentityStore.stableDeviceUUID()
+        self.setupPreferencesStore = setupPreferencesStore
 
         let intents = InitialNeed.allCases.map(\.rawValue)
         let userTags = UserTag.allCases.map(\.rawValue)
@@ -90,6 +138,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         resultsScreen = DemoRecoPOCAppModel.makeResultsScreen(sceneOptions: SceneCatalog.names)
         diagnosticsScreen = DemoRecoPOCAppModel.makeDiagnosticsScreen()
         virtualUsers = []
+        applyPersistedSetupPreferences()
         refreshPermissionCapabilityStatuses()
         syncDerivedState()
     }
@@ -120,6 +169,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
     func updateWillingness(for groupID: String, to option: PermissionWillingnessOption) {
         guard let index = setupScreen.permissions.firstIndex(where: { $0.id == groupID }) else { return }
         setupScreen.permissions[index].willingness = option
+        persistSetupPreferences()
         syncDerivedState()
     }
 
@@ -130,12 +180,14 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             setupScreen.questionnaire.additionalNeeds.removeAll()
             setupScreen.questionnaire.userTag = UserTag.any.rawValue
         }
+        persistSetupPreferences()
         syncDerivedState()
     }
 
     func setPrimaryIntent(_ value: String?) {
         guard !setupScreen.questionnaire.isSkipped else { return }
         setupScreen.questionnaire.primaryIntent = value
+        persistSetupPreferences()
         syncDerivedState()
     }
 
@@ -146,17 +198,21 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         } else {
             setupScreen.questionnaire.additionalNeeds.append(value)
         }
+        persistSetupPreferences()
         syncDerivedState()
     }
 
     func setUserTag(_ value: String) {
         guard !setupScreen.questionnaire.isSkipped else { return }
         setupScreen.questionnaire.userTag = value
+        persistSetupPreferences()
         syncDerivedState()
     }
 
     func startRun() {
         homeScreen.progressSummary = "Recommendation run in progress."
+        homeScreen.sensorSnapshotSummary = "Acquiring current sensor snapshot for this request…"
+        homeScreen.sensorSnapshotRows = []
         homeScreen.runStages = [
             .init(id: "acquire", title: "Data acquisition", detail: "Starting 15s bounded snapshot", style: .inFlight),
             .init(id: "derive", title: "Derive virtual contexts", detail: "Waiting for snapshot", style: .idle),
@@ -344,6 +400,13 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         ]
         homeScreen.latestResultsSummary = "Top-1 is ready for true-scene feedback across successful virtual users."
         homeScreen.canOpenResults = true
+        if let snapshot = state.snapshot {
+            homeScreen.sensorSnapshotSummary = "Sensor snapshot captured at \(Self.snapshotTimestamp(snapshot.capturedAt, timezoneID: snapshot.timezone))."
+            homeScreen.sensorSnapshotRows = sensorSnapshotRows(from: snapshot)
+        } else {
+            homeScreen.sensorSnapshotSummary = "No sensor snapshot was captured for this run."
+            homeScreen.sensorSnapshotRows = []
+        }
         resultsScreen.groups = state.results.map(resultGroup(from:))
         resultsScreen.feedbackQuality.dwellTimeSec = nil
         diagnosticsScreen.sensorStatuses = sensorStatuses(from: state.snapshot)
@@ -367,6 +430,151 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             "Feedback uses event_type=correction for every successful result group.",
             "Retry queue is in-memory for the current app process and is not cleared by starting another run.",
             "No impression event is emitted from this UI shell."
+        ]
+    }
+
+    private func applyPersistedSetupPreferences() {
+        guard let preferences = setupPreferencesStore.loadSetupPreferences() else { return }
+
+        for index in setupScreen.permissions.indices {
+            let id = setupScreen.permissions[index].id
+            guard let willingness = preferences.permissionWillingnessByID[id] else { continue }
+            setupScreen.permissions[index].willingness = willingness
+        }
+
+        let validIntents = Set(setupScreen.questionnaire.availablePrimaryIntents)
+        let validUserTags = Set(setupScreen.questionnaire.availableUserTags)
+        setupScreen.questionnaire.isSkipped = preferences.questionnaire.isSkipped
+
+        if preferences.questionnaire.isSkipped {
+            setupScreen.questionnaire.primaryIntent = nil
+            setupScreen.questionnaire.additionalNeeds = []
+            setupScreen.questionnaire.userTag = UserTag.any.rawValue
+        } else {
+            if let primaryIntent = preferences.questionnaire.primaryIntent, validIntents.contains(primaryIntent) {
+                setupScreen.questionnaire.primaryIntent = primaryIntent
+            } else {
+                setupScreen.questionnaire.primaryIntent = nil
+            }
+            setupScreen.questionnaire.additionalNeeds = preferences.questionnaire.additionalNeeds.filter {
+                validIntents.contains($0)
+            }
+            setupScreen.questionnaire.userTag = validUserTags.contains(preferences.questionnaire.userTag)
+                ? preferences.questionnaire.userTag
+                : UserTag.any.rawValue
+        }
+    }
+
+    private func persistSetupPreferences() {
+        let permissionWillingnessByID = Dictionary(
+            uniqueKeysWithValues: setupScreen.permissions.map { ($0.id, $0.willingness) }
+        )
+        setupPreferencesStore.saveSetupPreferences(
+            SetupPreferences(
+                permissionWillingnessByID: permissionWillingnessByID,
+                questionnaire: SetupQuestionnairePreferences(
+                    isSkipped: setupScreen.questionnaire.isSkipped,
+                    primaryIntent: setupScreen.questionnaire.primaryIntent,
+                    additionalNeeds: setupScreen.questionnaire.additionalNeeds,
+                    userTag: setupScreen.questionnaire.userTag
+                )
+            )
+        )
+    }
+
+    private func sensorSnapshotRows(from snapshot: RawSensorSnapshot) -> [SensorSnapshotRowModel] {
+        [
+            SensorSnapshotRowModel(
+                id: "captured_time",
+                title: "Captured time",
+                value: Self.snapshotTimestamp(snapshot.capturedAt, timezoneID: snapshot.timezone),
+                detail: "Timezone \(snapshot.timezone); hour \(snapshot.hour); weekday \(Self.weekdayLabel(snapshot.weekday))"
+            ),
+            SensorSnapshotRowModel(
+                id: "acquisition_window",
+                title: "Acquisition window",
+                value: "\(Self.snapshotTimestamp(snapshot.startedAt, timezoneID: snapshot.timezone)) → \(Self.snapshotTimestamp(snapshot.frozenAt, timezoneID: snapshot.timezone))",
+                detail: "Deadline \(Self.snapshotTimestamp(snapshot.deadline, timezoneID: snapshot.timezone))"
+            ),
+            SensorSnapshotRowModel(
+                id: "network",
+                title: "Network",
+                value: snapshot.network,
+                detail: Self.detail(["status \(Self.availabilityLabel(for: .connectivity, in: snapshot))"])
+            ),
+            SensorSnapshotRowModel(
+                id: "audio_route",
+                title: "Audio route",
+                value: snapshot.bluetooth,
+                detail: Self.detail(["speaker/headphone-like output"])
+            ),
+            SensorSnapshotRowModel(
+                id: "place",
+                title: "Place",
+                value: snapshot.placeType,
+                detail: Self.detail([
+                    "available \(snapshot.placeTypeAvailable ? "yes" : "no")",
+                    "confidence \(Self.percent(snapshot.placeTypeConfidence))",
+                    "quality \(snapshot.placeTypeQuality)",
+                ])
+            ),
+            SensorSnapshotRowModel(
+                id: "location",
+                title: "Location",
+                value: Self.locationValue(from: snapshot),
+                detail: Self.detail([
+                    snapshot.locationAccuracyM.map { "accuracy \(Self.measurement($0, unit: "m"))" },
+                    "status \(Self.availabilityLabel(for: .location, in: snapshot))",
+                ])
+            ),
+            SensorSnapshotRowModel(
+                id: "activity",
+                title: "Activity",
+                value: snapshot.activityState,
+                detail: Self.detail([
+                    "available \(snapshot.activityStateAvailable ? "yes" : "no")",
+                    "motion status \(Self.availabilityLabel(for: .motion, in: snapshot))",
+                ])
+            ),
+            SensorSnapshotRowModel(
+                id: "health",
+                title: "Health",
+                value: Self.healthValue(from: snapshot),
+                detail: Self.detail([
+                    "heart rate available \(snapshot.heartRateAvailable ? "yes" : "no")",
+                    "health status \(Self.availabilityLabel(for: .health, in: snapshot))",
+                ])
+            ),
+            SensorSnapshotRowModel(
+                id: "noise",
+                title: "Ambient noise",
+                value: snapshot.noiseClass ?? "Not captured",
+                detail: Self.detail([
+                    "available \(snapshot.noiseAvailable ? "yes" : "no")",
+                    "microphone status \(Self.availabilityLabel(for: .microphone, in: snapshot))",
+                ])
+            ),
+            SensorSnapshotRowModel(
+                id: "calendar",
+                title: "Calendar cue",
+                value: snapshot.calendarKeyword ?? "Not captured",
+                detail: Self.detail([
+                    "available \(snapshot.calendarAvailable ? "yes" : "no")",
+                    "calendar status \(Self.availabilityLabel(for: .calendar, in: snapshot))",
+                ])
+            ),
+            SensorSnapshotRowModel(
+                id: "weather",
+                title: "Weather",
+                value: snapshot.weather ?? "Not captured",
+                detail: Self.detail(["status \(Self.availabilityLabel(for: .weather, in: snapshot))"])
+            ),
+            SensorSnapshotRowModel(
+                id: "app_event",
+                title: "App event",
+                value: snapshot.appEvent,
+                detail: "Local context label used for this run"
+            ),
         ]
     }
 
@@ -407,6 +615,60 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
                 detail: event.detail ?? Self.durationLabel(for: event)
             )
         }
+    }
+
+    private static func snapshotTimestamp(_ date: Date, timezoneID: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        formatter.timeZone = TimeZone(identifier: timezoneID) ?? .current
+        return formatter.string(from: date)
+    }
+
+    private static func weekdayLabel(_ weekday: Int) -> String {
+        let labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        guard labels.indices.contains(weekday) else { return "\(weekday)" }
+        return labels[weekday]
+    }
+
+    private static func availabilityLabel(for sensor: RawSensorName, in snapshot: RawSensorSnapshot) -> String {
+        snapshot.statuses[sensor.rawValue]?.availability.rawValue ?? "unknown"
+    }
+
+    private static func locationValue(from snapshot: RawSensorSnapshot) -> String {
+        guard let latitude = snapshot.latitude, let longitude = snapshot.longitude else {
+            return "Not captured"
+        }
+        return "\(String(format: "%.5f", latitude)), \(String(format: "%.5f", longitude))"
+    }
+
+    private static func healthValue(from snapshot: RawSensorSnapshot) -> String {
+        var parts: [String] = []
+        if let heartRateZone = snapshot.heartRateZone {
+            parts.append("HR \(heartRateZone)")
+        }
+        if let stepsLast10Min = snapshot.stepsLast10Min {
+            parts.append("steps/10m \(stepsLast10Min)")
+        }
+        if let recentWorkoutMinutes24h = snapshot.recentWorkoutMinutes24h {
+            parts.append("workout/24h \(recentWorkoutMinutes24h)m")
+        }
+        if let sleepQuality = snapshot.sleepQuality {
+            parts.append("sleep \(sleepQuality)")
+        }
+        return parts.isEmpty ? "Not captured" : parts.joined(separator: " · ")
+    }
+
+    private static func percent(_ value: Double) -> String {
+        "\(Int((value * 100).rounded()))%"
+    }
+
+    private static func measurement(_ value: Double, unit: String) -> String {
+        "\(String(format: "%.0f", value))\(unit)"
+    }
+
+    private static func detail(_ values: [String?]) -> String? {
+        let detail = values.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "; ")
+        return detail.isEmpty ? nil : detail
     }
 
     private static func durationLabel(for event: TimingEvent) -> String {
@@ -486,6 +748,8 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
                 .init(id: "recommend", title: "Recommend fan-out", detail: "Waiting", style: .idle),
                 .init(id: "feedback", title: "Feedback submission", detail: "Blocked until true scene selected", style: .idle)
             ],
+            sensorSnapshotSummary: "Start a recommendation run to see the sensor inputs used for that request.",
+            sensorSnapshotRows: [],
             latestResultsSummary: "Results will group by virtual user after the first run.",
             retryStatus: RetryStatusModel(queuedCount: 1, nextRetryLabel: "Retry in 00:27", lastError: "Latest feedback batch had one simulated timeout."),
             canOpenResults: true

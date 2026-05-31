@@ -40,6 +40,30 @@ struct HomeRunView: View {
                 }
             }
 
+            Section("This run's sensor inputs") {
+                Text(model.sensorSnapshotSummary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                ForEach(model.sensorSnapshotRows) { row in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(row.title)
+                                .font(.headline)
+                            Spacer()
+                            Text(row.value)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        if let detail = row.detail {
+                            Text(detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+
             Section("Latest results") {
                 Text(model.latestResultsSummary)
                 Button("Open grouped results", action: onOpenResults)

@@ -21,7 +21,7 @@ struct SetupCapabilityGateModel {
     var readiness: CapabilityReadiness
 }
 
-enum PermissionWillingnessOption: String, CaseIterable, Identifiable {
+enum PermissionWillingnessOption: String, CaseIterable, Codable, Equatable, Identifiable, Sendable {
     case wouldGrant = "Would grant"
     case wouldNotGrant = "Would not grant"
     case unsure = "Unsure"
@@ -77,11 +77,20 @@ struct RetryStatusModel {
     var lastError: String?
 }
 
+struct SensorSnapshotRowModel: Identifiable, Equatable {
+    var id: String
+    var title: String
+    var value: String
+    var detail: String?
+}
+
 struct HomeRunScreenModel {
     var setupBanner: SetupBannerModel
     var primaryActionTitle: String
     var progressSummary: String
     var runStages: [RunStageRowModel]
+    var sensorSnapshotSummary: String
+    var sensorSnapshotRows: [SensorSnapshotRowModel]
     var latestResultsSummary: String
     var retryStatus: RetryStatusModel?
     var canOpenResults: Bool
