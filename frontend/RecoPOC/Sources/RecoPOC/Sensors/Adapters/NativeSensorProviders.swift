@@ -1830,6 +1830,207 @@ enum NativeActivityStateMapper {
     }
 }
 
+struct NativeMotionActivitySignal: Equatable, Sendable {
+    var stationary: Bool
+    var walking: Bool
+    var running: Bool
+    var automotive: Bool
+    var cycling: Bool
+    var unknown: Bool
+    var confidence: String
+    var confidenceScore: Int
+    var startedAt: Date
+    var source: String
+
+    init(
+        stationary: Bool = false,
+        walking: Bool = false,
+        running: Bool = false,
+        automotive: Bool = false,
+        cycling: Bool = false,
+        unknown: Bool = false,
+        confidence: String = "unknown",
+        confidenceScore: Int = 0,
+        startedAt: Date = Date(timeIntervalSince1970: 0),
+        source: String = "test"
+    ) {
+        self.stationary = stationary
+        self.walking = walking
+        self.running = running
+        self.automotive = automotive
+        self.cycling = cycling
+        self.unknown = unknown
+        self.confidence = confidence
+        self.confidenceScore = confidenceScore
+        self.startedAt = startedAt
+        self.source = source
+    }
+
+    var hasKnownActivity: Bool {
+        !unknown && (stationary || walking || running || automotive || cycling)
+    }
+
+    var flagSummary: String {
+        [
+            "stationary=\(stationary)",
+            "walking=\(walking)",
+            "running=\(running)",
+            "automotive=\(automotive)",
+            "cycling=\(cycling)",
+            "unknown=\(unknown)",
+            "confidence=\(confidence)",
+            "source=\(source)"
+        ].joined(separator: ";")
+    }
+}
+
+struct NativePedometerSignal: Equatable, Sendable {
+    var steps: Int
+    var distanceM: Double?
+    var startedAt: Date
+    var endedAt: Date
+
+    init(steps: Int, distanceM: Double? = nil, startedAt: Date, endedAt: Date) {
+        self.steps = steps
+        self.distanceM = distanceM
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+    }
+
+    var detailSummary: String {
+        let distance = distanceM.map { String(format: "%.1f", $0) } ?? "none"
+        return "steps=\(steps);distance_m=\(distance)"
+    }
+}
+
+struct NativeMotionActivityDecision: Equatable, Sendable {
+    var activityState: String
+    var rawActivity: String
+    var confidence: String
+    var source: String
+    var observedAt: Date
+    var reasonCode: String
+    var detail: String
+}
+
+enum NativeMotionActivityResolver {
+    static let recentStepWindow: TimeInterval = 90
+    static let walkingStepThreshold = 4
+
+    static func resolve(
+        live: NativeMotionActivitySignal?,
+        history: [NativeMotionActivitySignal],
+        pedometer: NativePedometerSignal?,
+        now: Date = Date()
+    ) -> NativeMotionActivityDecision {
+        let knownSignals = [live].compactMap { $0 }.filter(\.hasKnownActivity)
+            + bestRecentHistorySignals(from: history)
+        let strongestMovement = strongestNonStationary(from: knownSignals)
+        if let strongestMovement {
+            return decision(from: strongestMovement, reasonCode: "motion_resolved_system_activity")
+        }
+
+        if let pedometer, pedometer.steps >= walkingStepThreshold {
+            return NativeMotionActivityDecision(
+                activityState: "慢速",
+                rawActivity: "pedometer_steps",
+                confidence: "medium",
+                source: "pedometer_steps",
+                observedAt: pedometer.endedAt,
+                reasonCode: "motion_resolved_pedometer_steps",
+                detail: "Recent pedometer steps indicate walking; \(pedometer.detailSummary)."
+            )
+        }
+
+        if let stationary = knownSignals.first(where: { $0.stationary }) {
+            return decision(from: stationary, reasonCode: "motion_resolved_stationary")
+        }
+
+        if let pedometer, pedometer.steps == 0 {
+            return NativeMotionActivityDecision(
+                activityState: "静止",
+                rawActivity: "pedometer_no_steps_static_fallback",
+                confidence: "low",
+                source: "pedometer_no_steps_static_fallback",
+                observedAt: pedometer.endedAt,
+                reasonCode: "motion_resolved_no_steps_static_fallback",
+                detail: "No recent pedometer steps and no classified movement; \(pedometer.detailSummary)."
+            )
+        }
+
+        return NativeMotionActivityDecision(
+            activityState: "任意",
+            rawActivity: "unknown",
+            confidence: "unknown",
+            source: "unresolved",
+            observedAt: now,
+            reasonCode: "motion_resolution_unknown",
+            detail: "No live, recent historical, or pedometer evidence was sufficient to classify activity."
+        )
+    }
+
+    static func bestRecentHistorySignals(from signals: [NativeMotionActivitySignal]) -> [NativeMotionActivitySignal] {
+        guard let best = bestActivity(from: signals) else { return [] }
+        return [best]
+    }
+
+    static func bestActivity(from signals: [NativeMotionActivitySignal]) -> NativeMotionActivitySignal? {
+        signals
+            .filter(\.hasKnownActivity)
+            .sorted {
+                if abs($0.startedAt.timeIntervalSince($1.startedAt)) >= 30 {
+                    return $0.startedAt > $1.startedAt
+                }
+                if $0.confidenceScore != $1.confidenceScore {
+                    return $0.confidenceScore > $1.confidenceScore
+                }
+                return $0.startedAt > $1.startedAt
+            }
+            .first
+    }
+
+    private static func strongestNonStationary(from signals: [NativeMotionActivitySignal]) -> NativeMotionActivitySignal? {
+        let nonStationary = signals.filter { $0.running || $0.cycling || $0.automotive || $0.walking }
+        return nonStationary.sorted { lhs, rhs in
+            let lhsPriority = movementPriority(lhs)
+            let rhsPriority = movementPriority(rhs)
+            if lhsPriority != rhsPriority { return lhsPriority > rhsPriority }
+            if abs(lhs.startedAt.timeIntervalSince(rhs.startedAt)) >= 30 { return lhs.startedAt > rhs.startedAt }
+            if lhs.confidenceScore != rhs.confidenceScore { return lhs.confidenceScore > rhs.confidenceScore }
+            return lhs.startedAt > rhs.startedAt
+        }.first
+    }
+
+    private static func movementPriority(_ signal: NativeMotionActivitySignal) -> Int {
+        if signal.running || signal.cycling { return 4 }
+        if signal.automotive { return 3 }
+        if signal.walking { return 2 }
+        if signal.stationary { return 1 }
+        return 0
+    }
+
+    private static func decision(from signal: NativeMotionActivitySignal, reasonCode: String) -> NativeMotionActivityDecision {
+        let mapped = NativeActivityStateMapper.map(
+            stationary: signal.stationary,
+            walking: signal.walking,
+            running: signal.running,
+            automotive: signal.automotive,
+            cycling: signal.cycling,
+            unknown: signal.unknown,
+            confidence: signal.confidence
+        )
+        return NativeMotionActivityDecision(
+            activityState: mapped.activityState,
+            rawActivity: mapped.rawActivity,
+            confidence: mapped.confidence,
+            source: signal.source,
+            observedAt: signal.startedAt,
+            reasonCode: reasonCode,
+            detail: "Resolved from \(signal.source); \(signal.flagSummary)."
+        )
+    }
+}
+
 #if os(iOS) && canImport(CoreMotion)
 private protocol MotionActivitySnapshotProviding: Sendable {
     func readMotionActivitySnapshot() async -> RawSensorProviderReadOutcome
@@ -1950,120 +2151,157 @@ private struct SystemMotionActivitySnapshotProvider: MotionActivitySnapshotProvi
             )
         }
 
-        let (queryOutcome, queryStep) = await sensorTraceStep(
-            "motion.query_activity",
-            operation: { await MotionActivityReader().latestActivity(timeout: 10) },
+        let reader = MotionActivityReader()
+        let pedometerReader = MotionPedometerReader()
+        async let liveCapture = sensorTraceStep(
+            "motion.live_activity",
+            operation: { await reader.liveActivity(timeout: 2.5) },
             classify: { outcome in
                 switch outcome {
-                case .success(let sample, let totalCount, let usableCount):
-                    return (.available, nil, "samples=\(totalCount);usable=\(usableCount);confidence=\(sample.confidence)")
+                case .success(let sample):
+                    return (.available, nil, sample.flagSummary)
                 case .failure(let failure):
                     return (.unavailable, failure.reasonCode, failure.detail)
                 }
             }
         )
-        steps.append(queryStep)
-
-        switch queryOutcome {
-        case .success(let activity, _, _):
-            let mappingStartedAt = Date()
-            let mapped = NativeMotionActivityMapper.map(activity)
-            guard mapped.activityState != "任意" else {
-                let step = SensorStepTrace(
-                    name: "motion.map_activity",
-                    startedAt: mappingStartedAt,
-                    endedAt: Date(),
-                    availability: .unavailable,
-                    reasonCode: "motion_mapping_unknown",
-                    detail: "Motion activity mapped to the backend fallback value."
-                )
-                steps.append(step)
-                return RawSensorProviderReadOutcome(
-                    result: .unavailable(.missingSample),
-                    reasonCode: "motion_mapping_unknown",
-                    detail: "Motion activity mapped to the backend fallback value.",
-                    steps: steps
-                )
+        async let historyCapture = sensorTraceStep(
+            "motion.history_activity",
+            operation: { await reader.recentActivities(window: 5 * 60, timeout: 4) },
+            classify: { outcome in
+                switch outcome {
+                case .success(let samples, let totalCount, let usableCount):
+                    let best = NativeMotionActivityResolver.bestActivity(from: samples)
+                    return (.available, nil, "samples=\(totalCount);usable=\(usableCount);best=\(best?.flagSummary ?? "none")")
+                case .failure(let failure):
+                    return (.unavailable, failure.reasonCode, failure.detail)
+                }
             }
-            steps.append(
-                SensorStepTrace(
-                    name: "motion.map_activity",
-                    startedAt: mappingStartedAt,
-                    endedAt: Date(),
-                    availability: .available,
-                    detail: "activity_state=\(mapped.activityState);raw=\(mapped.rawActivity)"
-                )
-            )
-            return RawSensorProviderReadOutcome(
-                result: .reading(
-                    RawSensorReading(
-                        observedAt: activity.startDate,
-                        freshnessWindow: 600,
-                        values: [
-                            "activity_state": .string(mapped.activityState),
-                            "raw_motion_activity": .string(mapped.rawActivity),
-                            "raw_motion_confidence": .string(mapped.confidence),
-                        ]
-                    )
-                ),
-                steps: steps
-            )
+        )
+        async let pedometerCapture = sensorTraceStep(
+            "motion.pedometer_recent",
+            operation: { await pedometerReader.recentPedometerData(window: NativeMotionActivityResolver.recentStepWindow, timeout: 2) },
+            classify: { outcome in
+                switch outcome {
+                case .success(let pedometer):
+                    return (.available, nil, pedometer.detailSummary)
+                case .failure(let failure):
+                    return (.unavailable, failure.reasonCode, failure.detail)
+                }
+            }
+        )
 
-        case .failure(let failure):
+        let (liveOutcome, liveStep) = await liveCapture
+        let (historyOutcome, historyStep) = await historyCapture
+        let (pedometerOutcome, pedometerStep) = await pedometerCapture
+        steps.append(contentsOf: [liveStep, historyStep, pedometerStep])
+
+        let live: NativeMotionActivitySignal? = {
+            if case .success(let sample) = liveOutcome { return sample }
+            return nil
+        }()
+        let history: [NativeMotionActivitySignal] = {
+            if case .success(let samples, _, _) = historyOutcome { return samples }
+            return []
+        }()
+        let pedometer: NativePedometerSignal? = {
+            if case .success(let signal) = pedometerOutcome { return signal }
+            return nil
+        }()
+
+        let decisionStartedAt = Date()
+        let decision = NativeMotionActivityResolver.resolve(live: live, history: history, pedometer: pedometer, now: decisionStartedAt)
+        steps.append(
+            SensorStepTrace(
+                name: "motion.resolve_activity",
+                startedAt: decisionStartedAt,
+                endedAt: Date(),
+                availability: decision.activityState == "任意" ? .unavailable : .available,
+                reasonCode: decision.activityState == "任意" ? decision.reasonCode : nil,
+                detail: "activity_state=\(decision.activityState);raw=\(decision.rawActivity);source=\(decision.source);confidence=\(decision.confidence);reason=\(decision.reasonCode);\(decision.detail)"
+            )
+        )
+
+        guard decision.activityState != "任意" else {
             return RawSensorProviderReadOutcome(
-                result: .unavailable(failure.reason),
-                reasonCode: failure.reasonCode,
-                detail: failure.detail,
+                result: .unavailable(.missingSample),
+                reasonCode: decision.reasonCode,
+                detail: decision.detail,
                 steps: steps
             )
         }
+
+        return RawSensorProviderReadOutcome(
+            result: .reading(
+                RawSensorReading(
+                    observedAt: decision.observedAt,
+                    freshnessWindow: 600,
+                    values: [
+                        "activity_state": .string(decision.activityState),
+                        "raw_motion_activity": .string(decision.rawActivity),
+                        "raw_motion_confidence": .string(decision.confidence),
+                        "activity_state_source": .string(decision.source),
+                    ]
+                )
+            ),
+            steps: steps
+        )
     }
 }
 
-private struct MotionActivitySample: Sendable {
-    var stationary: Bool
-    var walking: Bool
-    var running: Bool
-    var automotive: Bool
-    var cycling: Bool
-    var unknown: Bool
-    var confidence: String
-    var confidenceScore: Int
-    var startDate: Date
-
-    init(_ activity: CMMotionActivity) {
-        self.stationary = activity.stationary
-        self.walking = activity.walking
-        self.running = activity.running
-        self.automotive = activity.automotive
-        self.cycling = activity.cycling
-        self.unknown = activity.unknown
-        self.confidence = NativeMotionActivityMapper.confidenceLabel(activity.confidence)
-        self.confidenceScore = NativeMotionActivityMapper.confidenceScore(activity.confidence)
-        self.startDate = activity.startDate
-    }
+private enum MotionSignalReadOutcome: Sendable {
+    case success(NativeMotionActivitySignal)
+    case failure(NativeSensorFailure)
 }
 
-private enum MotionActivityReadOutcome: Sendable {
-    case success(MotionActivitySample, totalCount: Int, usableCount: Int)
+private enum MotionHistoryReadOutcome: Sendable {
+    case success([NativeMotionActivitySignal], totalCount: Int, usableCount: Int)
+    case failure(NativeSensorFailure)
+}
+
+private enum MotionPedometerReadOutcome: Sendable {
+    case success(NativePedometerSignal)
     case failure(NativeSensorFailure)
 }
 
 private final class MotionActivityReader: @unchecked Sendable {
     private let manager = CMMotionActivityManager()
 
-    func latestActivity(timeout: TimeInterval = 10) async -> MotionActivityReadOutcome {
+    func liveActivity(timeout: TimeInterval = 2.5) async -> MotionSignalReadOutcome {
+        await withCheckedContinuation { continuation in
+            let box = SensorSingleResumeBox(continuation) { [self] in
+                self.manager.stopActivityUpdates()
+            }
+            manager.startActivityUpdates(to: .main) { activity in
+                guard let activity else { return }
+                box.resume(returning: .success(NativeMotionActivitySignal(activity, source: "live_activity")))
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
+                box.resume(
+                    returning: .failure(
+                        NativeSensorFailure(
+                            reason: .deadlineExceeded,
+                            reasonCode: "motion_live_timeout",
+                            detail: "CMMotionActivity live updates did not return within \(String(format: "%.1f", timeout))s."
+                        )
+                    )
+                )
+            }
+        }
+    }
+
+    func recentActivities(window: TimeInterval = 5 * 60, timeout: TimeInterval = 4) async -> MotionHistoryReadOutcome {
         await withCheckedContinuation { continuation in
             let box = SensorSingleResumeBox(continuation)
             let endDate = Date()
-            let startDate = endDate.addingTimeInterval(-600)
+            let startDate = endDate.addingTimeInterval(-window)
             manager.queryActivityStarting(from: startDate, to: endDate, to: .main) { activities, error in
                 if let error {
                     box.resume(
                         returning: .failure(
                             NativeSensorFailure(
                                 reason: .missingSample,
-                                reasonCode: "motion_query_error:\(String(describing: type(of: error)))",
+                                reasonCode: "motion_history_error:\(String(describing: type(of: error)))",
                                 detail: error.localizedDescription
                             )
                         )
@@ -2077,36 +2315,37 @@ private final class MotionActivityReader: @unchecked Sendable {
                         returning: .failure(
                             NativeSensorFailure(
                                 reason: .missingSample,
-                                reasonCode: "motion_no_samples",
-                                detail: "CMMotionActivity returned no samples in the last 10 minutes."
+                                reasonCode: "motion_history_no_samples",
+                                detail: "CMMotionActivity returned no samples in the last \(Int(window / 60)) minutes."
                             )
                         )
                     )
                     return
                 }
 
-                let usableCount = activities.filter { !$0.unknown }.count
-                guard let activity = NativeMotionActivityMapper.bestActivity(from: activities) else {
+                let samples = activities.map { NativeMotionActivitySignal($0, source: "history_activity") }
+                let usableCount = samples.filter(\.hasKnownActivity).count
+                guard usableCount > 0 else {
                     box.resume(
                         returning: .failure(
                             NativeSensorFailure(
                                 reason: .missingSample,
-                                reasonCode: "motion_only_unknown_samples",
-                                detail: "CMMotionActivity returned \(activities.count) samples, but all were unknown."
+                                reasonCode: "motion_history_no_usable_samples",
+                                detail: "CMMotionActivity returned \(activities.count) samples, but none mapped to a known backend activity."
                             )
                         )
                     )
                     return
                 }
-                box.resume(returning: .success(MotionActivitySample(activity), totalCount: activities.count, usableCount: usableCount))
+                box.resume(returning: .success(samples, totalCount: activities.count, usableCount: usableCount))
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
                 box.resume(
                     returning: .failure(
                         NativeSensorFailure(
                             reason: .deadlineExceeded,
-                            reasonCode: "motion_query_timeout",
-                            detail: "CMMotionActivity query did not return within \(Int(timeout))s."
+                            reasonCode: "motion_history_timeout",
+                            detail: "CMMotionActivity history query did not return within \(Int(timeout))s."
                         )
                     )
                 )
@@ -2115,19 +2354,122 @@ private final class MotionActivityReader: @unchecked Sendable {
     }
 }
 
-enum NativeMotionActivityMapper {
-    static func bestActivity(from activities: [CMMotionActivity]) -> CMMotionActivity? {
-        activities
-            .filter { !$0.unknown }
-            .sorted {
-                if $0.confidence != $1.confidence {
-                    return confidenceScore($0.confidence) > confidenceScore($1.confidence)
-                }
-                return $0.startDate > $1.startDate
-            }
-            .first
-    }
+private final class MotionPedometerReader: @unchecked Sendable {
+    private let pedometer = CMPedometer()
 
+    func recentPedometerData(window: TimeInterval, timeout: TimeInterval = 2) async -> MotionPedometerReadOutcome {
+        guard CMPedometer.isStepCountingAvailable() else {
+            return .failure(
+                NativeSensorFailure(
+                    reason: .sensorDisabled,
+                    reasonCode: "pedometer_unavailable",
+                    detail: "CMPedometer step counting is unavailable on this device."
+                )
+            )
+        }
+
+        switch CMPedometer.authorizationStatus() {
+        case .authorized:
+            break
+        case .denied, .restricted:
+            return .failure(
+                NativeSensorFailure(
+                    reason: .permissionDenied,
+                    reasonCode: "pedometer_permission_denied",
+                    detail: "Motion & Fitness pedometer permission is denied or restricted."
+                )
+            )
+        case .notDetermined:
+            return .failure(
+                NativeSensorFailure(
+                    reason: .missingSample,
+                    reasonCode: "pedometer_permission_not_determined",
+                    detail: "Motion & Fitness pedometer permission has not been granted yet."
+                )
+            )
+        @unknown default:
+            return .failure(
+                NativeSensorFailure(
+                    reason: .unsupported,
+                    reasonCode: "pedometer_authorization_unknown",
+                    detail: "iOS returned an unknown pedometer authorization state."
+                )
+            )
+        }
+
+        return await withCheckedContinuation { continuation in
+            let box = SensorSingleResumeBox(continuation)
+            let endDate = Date()
+            let startDate = endDate.addingTimeInterval(-window)
+            pedometer.queryPedometerData(from: startDate, to: endDate) { data, error in
+                if let error {
+                    box.resume(
+                        returning: .failure(
+                            NativeSensorFailure(
+                                reason: .missingSample,
+                                reasonCode: "pedometer_query_error:\(String(describing: type(of: error)))",
+                                detail: error.localizedDescription
+                            )
+                        )
+                    )
+                    return
+                }
+                guard let data else {
+                    box.resume(
+                        returning: .failure(
+                            NativeSensorFailure(
+                                reason: .missingSample,
+                                reasonCode: "pedometer_no_samples",
+                                detail: "CMPedometer returned no recent step samples."
+                            )
+                        )
+                    )
+                    return
+                }
+                box.resume(
+                    returning: .success(
+                        NativePedometerSignal(
+                            steps: data.numberOfSteps.intValue,
+                            distanceM: data.distance?.doubleValue,
+                            startedAt: startDate,
+                            endedAt: endDate
+                        )
+                    )
+                )
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
+                box.resume(
+                    returning: .failure(
+                        NativeSensorFailure(
+                            reason: .deadlineExceeded,
+                            reasonCode: "pedometer_query_timeout",
+                            detail: "CMPedometer query did not return within \(Int(timeout))s."
+                        )
+                    )
+                )
+            }
+        }
+    }
+}
+
+private extension NativeMotionActivitySignal {
+    init(_ activity: CMMotionActivity, source: String) {
+        self.init(
+            stationary: activity.stationary,
+            walking: activity.walking,
+            running: activity.running,
+            automotive: activity.automotive,
+            cycling: activity.cycling,
+            unknown: activity.unknown,
+            confidence: NativeMotionActivityMapper.confidenceLabel(activity.confidence),
+            confidenceScore: NativeMotionActivityMapper.confidenceScore(activity.confidence),
+            startedAt: activity.startDate,
+            source: source
+        )
+    }
+}
+
+enum NativeMotionActivityMapper {
     fileprivate static func confidenceScore(_ confidence: CMMotionActivityConfidence) -> Int {
         switch confidence {
         case .high: return 3
@@ -2144,18 +2486,6 @@ enum NativeMotionActivityMapper {
         case .low: return "low"
         @unknown default: return "unknown"
         }
-    }
-
-    fileprivate static func map(_ activity: MotionActivitySample) -> (activityState: String, rawActivity: String, confidence: String) {
-        NativeActivityStateMapper.map(
-            stationary: activity.stationary,
-            walking: activity.walking,
-            running: activity.running,
-            automotive: activity.automotive,
-            cycling: activity.cycling,
-            unknown: activity.unknown,
-            confidence: activity.confidence
-        )
     }
 }
 #endif

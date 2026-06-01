@@ -329,6 +329,101 @@ struct SensorAcquisitionTests {
         #expect(NativeWeatherMapper.label(for: "mostlyCloudy") == "多云")
     }
 
+    @Test("motion activity resolver uses recency and pedometer fallbacks")
+    func motionActivityResolverUsesRecencyAndPedometerFallbacks() async throws {
+        let now = Date(timeIntervalSince1970: 9_000)
+        let oldStationary = NativeMotionActivitySignal(
+            stationary: true,
+            confidence: "high",
+            confidenceScore: 3,
+            startedAt: now.addingTimeInterval(-120),
+            source: "history_activity"
+        )
+        let recentWalking = NativeMotionActivitySignal(
+            walking: true,
+            confidence: "medium",
+            confidenceScore: 2,
+            startedAt: now.addingTimeInterval(-10),
+            source: "history_activity"
+        )
+        let recencyDecision = NativeMotionActivityResolver.resolve(
+            live: nil,
+            history: [oldStationary, recentWalking],
+            pedometer: nil,
+            now: now
+        )
+        #expect(recencyDecision.activityState == "慢速")
+        #expect(recencyDecision.source == "history_activity")
+
+        let liveStationary = NativeMotionActivitySignal(
+            stationary: true,
+            confidence: "medium",
+            confidenceScore: 2,
+            startedAt: now,
+            source: "live_activity"
+        )
+        let walkingSteps = NativePedometerSignal(
+            steps: 8,
+            distanceM: 6.4,
+            startedAt: now.addingTimeInterval(-90),
+            endedAt: now
+        )
+        let pedometerWalkingDecision = NativeMotionActivityResolver.resolve(
+            live: liveStationary,
+            history: [],
+            pedometer: walkingSteps,
+            now: now
+        )
+        #expect(pedometerWalkingDecision.activityState == "慢速")
+        #expect(pedometerWalkingDecision.source == "pedometer_steps")
+
+        let automotive = NativeMotionActivitySignal(
+            automotive: true,
+            confidence: "low",
+            confidenceScore: 1,
+            startedAt: now,
+            source: "live_activity"
+        )
+        let automotiveDecision = NativeMotionActivityResolver.resolve(
+            live: automotive,
+            history: [],
+            pedometer: walkingSteps,
+            now: now
+        )
+        #expect(automotiveDecision.activityState == "中速")
+        #expect(automotiveDecision.source == "live_activity")
+
+        let unknownLive = NativeMotionActivitySignal(
+            unknown: true,
+            confidence: "low",
+            confidenceScore: 1,
+            startedAt: now,
+            source: "live_activity"
+        )
+        let noSteps = NativePedometerSignal(
+            steps: 0,
+            startedAt: now.addingTimeInterval(-90),
+            endedAt: now
+        )
+        let staticFallbackDecision = NativeMotionActivityResolver.resolve(
+            live: unknownLive,
+            history: [],
+            pedometer: noSteps,
+            now: now
+        )
+        #expect(staticFallbackDecision.activityState == "静止")
+        #expect(staticFallbackDecision.source == "pedometer_no_steps_static_fallback")
+
+        let unresolvedDecision = NativeMotionActivityResolver.resolve(
+            live: unknownLive,
+            history: [],
+            pedometer: nil,
+            now: now
+        )
+        #expect(unresolvedDecision.activityState == "任意")
+        #expect(unresolvedDecision.reasonCode == "motion_resolution_unknown")
+    }
+
     @Test("snapshot derives activity and noise from captured provider fields")
     func snapshotDerivesActivityAndNoise() async throws {
         let start = Date(timeIntervalSince1970: 8_000)
