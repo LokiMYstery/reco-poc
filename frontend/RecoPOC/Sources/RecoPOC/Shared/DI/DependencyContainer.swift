@@ -101,11 +101,13 @@ public struct DependencyContainer: Sendable {
 
   public static func nativeCapableLive(
     baseURL: URL = URL(string: "http://127.0.0.1:8000")!,
-    permissionCapabilityStatusProvider: any PermissionCapabilityStatusProviding =
-      NativeCapablePermissionCapabilityStatusProvider()
+    permissionCapabilityStatusProvider: (any PermissionCapabilityStatusProviding)? = nil
   ) -> DependencyContainer {
-    DependencyContainer(
-      runtimeMode: .nativeCapable(permissionCapabilityStatusProvider: permissionCapabilityStatusProvider),
+    let permissionProvider = permissionCapabilityStatusProvider
+      ?? NativeCapablePermissionCapabilityStatusProvider(networkWarmupURL: baseURL)
+
+    return DependencyContainer(
+      runtimeMode: .nativeCapable(permissionCapabilityStatusProvider: permissionProvider),
       contextDeriver: VirtualContextDeriver(),
       payloadMapper: BackendPayloadMapper(),
       apiClient: LiveRecommendationAPIClient(baseURL: baseURL),

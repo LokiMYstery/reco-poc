@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 #if os(iOS) && canImport(AVFAudio)
 import AVFAudio
@@ -96,11 +99,11 @@ public struct BaselinePermissionCapabilityStatusProvider: PermissionCapabilitySt
   public func snapshot() -> PermissionCapabilityStatusSnapshot {
     PermissionCapabilityStatusSnapshot(
       gate: SetupCapabilityGateStatus(
-        title: "Phase 0 host gate: package-only baseline",
+        title: "Setup can manage experiment inputs",
         summary:
-          "Baseline-safe run path is available; entitlement-backed permissions remain blocked.",
+          "Use Setup to choose permissions you do not want to grant and to complete the questionnaire.",
         detail:
-          "This SwiftPM package can run the recommendation baseline today, but location, motion, HealthKit, microphone, calendar, WeatherKit, and similar device permission flows require a native host before they can be verified on device.",
+          "The package baseline can run recommendations, while entitlement-backed device prompts need the signed iOS host. Recommendation runs use the current Setup state and stay prompt-free.",
         readiness: .requiresHost
       ),
       permissions: [
@@ -164,9 +167,18 @@ public struct BaselinePermissionCapabilityStatusProvider: PermissionCapabilitySt
   }
 }
 
+private struct NetworkWarmupOutcome: Sendable {
+  var statusText: String
+  var detailText: String
+  var readiness: PermissionCapabilityReadiness
+}
+
 public final class NativeCapablePermissionCapabilityStatusProvider:
   PermissionCapabilityStatusProviding, @unchecked Sendable
 {
+  private let networkWarmupURL: URL?
+  private let networkSession: URLSession
+
   #if os(iOS) && canImport(CoreLocation)
   private let locationRequester = LocationPermissionRequester()
   #endif
@@ -175,7 +187,13 @@ public final class NativeCapablePermissionCapabilityStatusProvider:
   private let motionRequester = MotionPermissionRequester()
   #endif
 
-  public init() {}
+  public init(
+    networkWarmupURL: URL? = nil,
+    networkSession: URLSession = .shared
+  ) {
+    self.networkWarmupURL = networkWarmupURL
+    self.networkSession = networkSession
+  }
 
   public func snapshot() -> PermissionCapabilityStatusSnapshot {
     let permissions = [
@@ -192,10 +210,10 @@ public final class NativeCapablePermissionCapabilityStatusProvider:
 
     return PermissionCapabilityStatusSnapshot(
       gate: SetupCapabilityGateStatus(
-        title: "Native host permission gate: device prompts enabled",
-        summary: "This host target owns privacy strings, entitlements, and setup-triggered permission requests.",
+        title: "Setup can request device permissions",
+        summary: "Use Setup to choose permissions you do not want to grant and to complete the questionnaire.",
         detail:
-          "Tap Check / Request in Setup to invoke system authorization sheets. Recommendation runs stay prompt-free and only read whatever setup already allowed.",
+          "Tap Check / Request in Setup to invoke system authorization sheets. Recommendation runs stay prompt-free and only read whatever Setup already allowed.",
         readiness: gateReadiness(from: permissions)
       ),
       permissions: permissions
@@ -208,7 +226,9 @@ public final class NativeCapablePermissionCapabilityStatusProvider:
       return "Requesting system permission…"
     case "weather":
       return "Checking entitlement-only service…"
-    case "audio_route", "network", "questionnaire":
+    case "network":
+      return "Requesting network authorization…"
+    case "audio_route", "questionnaire":
       return "Inspecting low-permission signal…"
     default:
       return "Inspecting…"
@@ -232,7 +252,7 @@ public final class NativeCapablePermissionCapabilityStatusProvider:
     case "audio_route":
       return audioRouteStatus(requested: true)
     case "network":
-      return networkStatus(requested: true)
+      return await requestNetworkPermission()
     case "questionnaire":
       return questionnaireStatus(requested: true)
     default:
@@ -650,15 +670,83 @@ public final class NativeCapablePermissionCapabilityStatusProvider:
     )
   }
 
-  private func networkStatus(requested: Bool = false) -> PermissionCapabilityStatus {
-    PermissionCapabilityStatus(
+  private func networkStatus(
+    requested: Bool = false,
+    warmupOutcome: NetworkWarmupOutcome? = nil
+  ) -> PermissionCapabilityStatus {
+    if let warmupOutcome {
+      return PermissionCapabilityStatus(
+        id: "network",
+        statusText: warmupOutcome.statusText,
+        detailText: warmupOutcome.detailText,
+        readiness: warmupOutcome.readiness
+      )
+    }
+
+    let wasRequested = requested || NativePermissionAttemptStore.wasRequested("network")
+    return PermissionCapabilityStatus(
       id: "network",
-      statusText: "Available",
-      detailText: requested
-        ? "Network path inspection does not require a separate iOS prompt."
-        : "No additional host entitlement needed for baseline network status.",
+      statusText: wasRequested ? "Network warm-up requested" : "Ready for network warm-up",
+      detailText: wasRequested
+        ? "A lightweight backend preflight has been requested before Run so iOS network-data or local-network prompts should not interrupt the recommendation request."
+        : "Tap Check / Request, or use the first-install prompt, to make a lightweight backend preflight before Run. iOS has no separate generic Internet permission API, so this intentionally touches the configured backend early.",
       readiness: .available
     )
+  }
+
+  private func requestNetworkPermission() async -> PermissionCapabilityStatus {
+    guard let networkWarmupURL else {
+      NativePermissionAttemptStore.markRequested("network")
+      return networkStatus(
+        requested: true,
+        warmupOutcome: NetworkWarmupOutcome(
+          statusText: "Network warm-up not configured",
+          detailText: "No backend URL was provided to preflight. Run may still trigger iOS network-data or local-network prompts on its first backend request.",
+          readiness: .limited
+        )
+      )
+    }
+
+    let outcome = await warmUpNetworkAuthorization(with: networkWarmupURL)
+    NativePermissionAttemptStore.markRequested("network")
+    return networkStatus(requested: true, warmupOutcome: outcome)
+  }
+
+  private func warmUpNetworkAuthorization(with url: URL) async -> NetworkWarmupOutcome {
+    var request = URLRequest(url: url)
+    request.httpMethod = "HEAD"
+    request.cachePolicy = .reloadIgnoringLocalCacheData
+    request.timeoutInterval = 6
+
+    let target = Self.networkTargetDescription(url)
+    do {
+      let (_, response) = try await networkSession.data(for: request)
+      if let httpResponse = response as? HTTPURLResponse {
+        return NetworkWarmupOutcome(
+          statusText: "Network warm-up completed",
+          detailText: "Backend preflight to \(target) completed with HTTP \(httpResponse.statusCode). Network prompts should be resolved before Run.",
+          readiness: .available
+        )
+      }
+      return NetworkWarmupOutcome(
+        statusText: "Network warm-up completed",
+        detailText: "Backend preflight to \(target) returned a non-HTTP response. Network prompts should be resolved before Run.",
+        readiness: .available
+      )
+    } catch {
+      return NetworkWarmupOutcome(
+        statusText: "Network warm-up attempted",
+        detailText: "Backend preflight to \(target) failed: \(error.localizedDescription). If iOS showed a network permission prompt, answer it before Run; otherwise verify backend reachability.",
+        readiness: .limited
+      )
+    }
+  }
+
+  private static func networkTargetDescription(_ url: URL) -> String {
+    if let host = url.host, let scheme = url.scheme {
+      return "\(scheme)://\(host)"
+    }
+    return url.absoluteString
   }
 
   private func questionnaireStatus(requested: Bool = false) -> PermissionCapabilityStatus {

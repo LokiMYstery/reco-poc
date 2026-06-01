@@ -49,7 +49,7 @@ struct SetupView: View {
             .foregroundStyle(.secondary)
         }
       } header: {
-        Text("Host / Capability Gate")
+        Text("Permission Setup")
       }
 
       Section("Permission willingness") {

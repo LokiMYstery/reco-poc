@@ -66,6 +66,37 @@ final class PermissionCapabilityTests: XCTestCase {
     }
 
     @MainActor
+    func testNewSetupDefaultsAllPermissionWillingnessToWouldGrant() {
+        let model = DemoRecoPOCAppModel(
+            container: .demo(),
+            deviceUUID: "device-test",
+            setupPreferencesStore: MemorySetupPreferencesStore()
+        )
+
+        XCTAssertTrue(model.setupScreen.permissions.allSatisfy { $0.willingness == .wouldGrant })
+    }
+
+    @MainActor
+    func testRequestAllPermissionMaintenanceRequestsEveryOnboardingPermissionID() async throws {
+        let provider = SpyPermissionCapabilityStatusProvider()
+        var container = DependencyContainer.demo()
+        container.permissionCapabilityStatusProvider = provider
+        let model = DemoRecoPOCAppModel(
+            container: container,
+            deviceUUID: "device-test",
+            setupPreferencesStore: MemorySetupPreferencesStore()
+        )
+
+        model.requestAllPermissionMaintenance()
+        for _ in 0..<50 {
+            if provider.requestedIDs == DemoRecoPOCAppModel.firstInstallPermissionRequestIDs { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertEqual(provider.requestedIDs, DemoRecoPOCAppModel.firstInstallPermissionRequestIDs)
+    }
+
+    @MainActor
     func testHomeShowsHumanReadableSensorInputsAfterRun() async throws {
         let model = DemoRecoPOCAppModel(
             container: .demo(),
@@ -86,6 +117,77 @@ final class PermissionCapabilityTests: XCTestCase {
         XCTAssertTrue(rows.contains { $0.title == "Audio route" && $0.value == "耳机" })
         XCTAssertTrue(rows.contains { $0.title == "Health" && $0.value.contains("steps/10m 250") })
         XCTAssertFalse(rows.map { "\($0.title) \($0.value) \($0.detail ?? "")" }.joined(separator: " ").contains("req_"))
+    }
+
+    @MainActor
+    func testHomeShowsFullAccessResultAndSubmitsUpToThreeTrueScenes() async throws {
+        let api = FakeRecommendationAPIClient()
+        var container = DependencyContainer.demo()
+        container.apiClient = api
+        let model = DemoRecoPOCAppModel(
+            container: container,
+            deviceUUID: "device-test",
+            setupPreferencesStore: MemorySetupPreferencesStore()
+        )
+
+        model.startRun()
+        for _ in 0..<50 {
+            if model.homeScreen.featuredResult != nil { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertEqual(model.homeScreen.featuredResult?.userTitle, "u_full_permission")
+        XCTAssertTrue(model.homeScreen.canSelectTrueScenes)
+
+        model.toggleTrueSceneSelection("阅读")
+        model.toggleTrueSceneSelection("冥想")
+        model.toggleTrueSceneSelection("减压")
+        model.toggleTrueSceneSelection("跑步")
+
+        XCTAssertEqual(model.homeScreen.selectedScenes, ["阅读", "冥想", "减压"])
+        XCTAssertTrue(model.homeScreen.canSubmitFeedback)
+
+        model.submitFeedbackSelection()
+        for _ in 0..<50 {
+            if api.feedbackRequests.count == 3 { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertEqual(api.feedbackRequests.map(\.acceptedScene), ["阅读", "冥想", "减压"])
+        XCTAssertEqual(Set(api.feedbackRequests.map(\.userID)), Set(["device-test:u_full_permission"]))
+        XCTAssertEqual(Set(api.feedbackRequests.map(\.requestID)).count, 1)
+        XCTAssertTrue(api.feedbackRequests.allSatisfy { $0.eventType == "correction" })
+        XCTAssertTrue(api.feedbackRequests.allSatisfy { $0.dwellTimeSec == nil && $0.playedRatioPct == nil && $0.nextAction == nil })
+    }
+
+    func testPermissionSetupCopyAvoidsAbstractHostTargetLanguage() {
+        let gate = NativeCapablePermissionCapabilityStatusProvider().snapshot().gate
+        let copy = [gate.title, gate.summary, gate.detail].joined(separator: " ")
+
+        XCTAssertFalse(copy.contains("This host target owns"))
+        XCTAssertTrue(copy.contains("Setup"))
+        XCTAssertTrue(copy.contains("questionnaire"))
+    }
+
+    func testNativeNetworkMaintenanceWarmsConfiguredBackend() async throws {
+        NetworkWarmupURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [NetworkWarmupURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let url = try XCTUnwrap(URL(string: "https://experiment.test"))
+        let provider = NativeCapablePermissionCapabilityStatusProvider(
+            networkWarmupURL: url,
+            networkSession: session
+        )
+
+        let status = await provider.requestMaintenance(for: "network")
+
+        XCTAssertEqual(NetworkWarmupURLProtocol.requestedURLs, [url])
+        XCTAssertEqual(NetworkWarmupURLProtocol.requestedMethods, ["HEAD"])
+        XCTAssertEqual(status.id, "network")
+        XCTAssertEqual(status.statusText, "Network warm-up completed")
+        XCTAssertEqual(status.readiness, .available)
+        XCTAssertTrue(status.detailText?.contains("HTTP 204") == true)
     }
 }
 
@@ -143,4 +245,53 @@ private final class SpyPermissionCapabilityStatusProvider: PermissionCapabilityS
             readiness: .available
         )
     }
+}
+
+private final class NetworkWarmupURLProtocol: URLProtocol {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var storedRequestedURLs: [URL] = []
+    nonisolated(unsafe) private static var storedRequestedMethods: [String] = []
+
+    static var requestedURLs: [URL] {
+        lock.withLock { storedRequestedURLs }
+    }
+
+    static var requestedMethods: [String] {
+        lock.withLock { storedRequestedMethods }
+    }
+
+    static func reset() {
+        lock.withLock {
+            storedRequestedURLs = []
+            storedRequestedMethods = []
+        }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        if let url = request.url {
+            Self.lock.withLock {
+                Self.storedRequestedURLs.append(url)
+                Self.storedRequestedMethods.append(request.httpMethod ?? "GET")
+            }
+            let response = HTTPURLResponse(
+                url: url,
+                statusCode: 204,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        }
+        client?.urlProtocol(self, didLoad: Data())
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

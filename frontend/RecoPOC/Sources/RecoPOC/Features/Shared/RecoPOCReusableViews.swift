@@ -61,6 +61,52 @@ struct StageIndicatorRow: View {
     }
 }
 
+struct ResultGroupSummaryCard: View {
+    let group: ResultGroupModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(group.userTitle)
+                        .font(.headline)
+                    Text(group.userSubtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 4) {
+                    StatusBadge(text: group.requestStatus, tint: group.errorMessage == nil ? .green : .orange)
+                    Text(group.latencyLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let topRecommendation = group.topRecommendation {
+                Label("Top-1: \(topRecommendation)", systemImage: "star.fill")
+                    .foregroundStyle(.yellow)
+            }
+
+            if group.recommendations.isEmpty {
+                Text(group.errorMessage ?? "No recommendations available.")
+                    .foregroundStyle(.orange)
+            } else {
+                ForEach(group.recommendations) { item in
+                    HStack {
+                        Text("#\(item.rank) \(item.sceneName)")
+                        Spacer()
+                        Text(item.confidenceLabel)
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.subheadline)
+                }
+            }
+        }
+        .padding(.vertical, 6)
+    }
+}
+
 struct TagCloud: View {
     let options: [String]
     let selectedValues: Set<String>

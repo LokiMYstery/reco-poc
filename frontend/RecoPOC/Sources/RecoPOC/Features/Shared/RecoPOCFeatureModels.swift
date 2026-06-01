@@ -87,8 +87,16 @@ struct SensorSnapshotRowModel: Identifiable, Equatable {
 struct HomeRunScreenModel {
     var setupBanner: SetupBannerModel
     var primaryActionTitle: String
+    var flowInstructions: String
     var progressSummary: String
     var runStages: [RunStageRowModel]
+    var featuredResult: ResultGroupModel?
+    var sceneOptions: [String]
+    var selectedScenes: [String]
+    var maxTrueSceneSelections: Int
+    var canSelectTrueScenes: Bool
+    var canSubmitFeedback: Bool
+    var feedbackSubmitTitle: String
     var sensorSnapshotSummary: String
     var sensorSnapshotRows: [SensorSnapshotRowModel]
     var latestResultsSummary: String
@@ -123,25 +131,8 @@ struct ResultGroupModel: Identifiable {
     var errorMessage: String?
 }
 
-struct FeedbackOptionModel: Identifiable, Equatable {
-    var id: String { value ?? "unset" }
-    var title: String
-    var value: String?
-}
-
-struct FeedbackQualitySelectionModel {
-    var dwellTimeSec: Int?
-    var playedRatioPctOptions: [FeedbackOptionModel]
-    var selectedPlayedRatioPct: Double?
-    var nextActionOptions: [FeedbackOptionModel]
-    var selectedNextAction: String?
-}
-
 struct ResultsScreenModel {
     var groups: [ResultGroupModel]
-    var sceneOptions: [String]
-    var selectedScene: String?
-    var feedbackQuality: FeedbackQualitySelectionModel
     var feedbackStatus: RetryStatusModel?
 }
 

@@ -59,6 +59,7 @@ public struct RunState: Codable, Equatable, Sendable {
     public var timingEvents: [TimingEvent]
     public var errorMessage: String?
     public var selectedTrueScene: String?
+    public var selectedTrueScenes: [String]
     public var feedbackQuality: FeedbackQuality?
 
     public init(
@@ -72,6 +73,7 @@ public struct RunState: Codable, Equatable, Sendable {
         timingEvents: [TimingEvent] = [],
         errorMessage: String? = nil,
         selectedTrueScene: String? = nil,
+        selectedTrueScenes: [String] = [],
         feedbackQuality: FeedbackQuality? = nil
     ) {
         self.phase = phase
@@ -83,9 +85,16 @@ public struct RunState: Codable, Equatable, Sendable {
         self.retryJobs = retryJobs
         self.timingEvents = timingEvents
         self.errorMessage = errorMessage
-        self.selectedTrueScene = selectedTrueScene
+        self.selectedTrueScenes = selectedTrueScenes.isEmpty ? selectedTrueScene.map { [$0] } ?? [] : selectedTrueScenes
+        self.selectedTrueScene = selectedTrueScene ?? self.selectedTrueScenes.first
         self.feedbackQuality = feedbackQuality
     }
 
     public static let idle = RunState(phase: .idle)
+}
+
+public extension RunState {
+    var fullAccessResult: RecommendationResult? {
+        results.first { $0.virtualUserKey == "u_full_permission" }
+    }
 }
