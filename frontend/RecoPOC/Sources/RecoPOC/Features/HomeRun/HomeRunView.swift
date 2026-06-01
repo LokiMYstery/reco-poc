@@ -86,7 +86,7 @@ struct HomeRunView: View {
             } header: {
                 Text("True Scene Selector (select at least 1, up to 3)")
             } footer: {
-                Text("Choose up to 3 scenes you truly want. Each selected scene sends one correction feedback item for the full-access result.")
+                Text("Each selected scene sends one correction feedback item for every successful virtual user result.")
             }
 
             Section("Progress") {

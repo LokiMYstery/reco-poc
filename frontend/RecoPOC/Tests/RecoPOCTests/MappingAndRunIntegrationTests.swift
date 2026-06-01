@@ -116,7 +116,7 @@ final class MappingAndRunIntegrationTests: XCTestCase {
         XCTAssertNil(object["impression"])
     }
 
-    func testRunCoordinatorUsesOneSnapshotForManyUsersAndSubmitsFeedbackOnlyForFullAccessResult() async {
+    func testRunCoordinatorUsesOneSnapshotForManyUsersAndSubmitsFeedbackForEverySuccessfulResult() async {
         let users = Array(VirtualUserRegistry.defaultUsers(deviceUUID: "device-demo").prefix(3))
         let failingKey = users[1].key
         let api = FakeRecommendationAPIClient(failFeedback: true, failedRecommendKeys: [failingKey])
@@ -137,14 +137,14 @@ final class MappingAndRunIntegrationTests: XCTestCase {
         XCTAssertEqual(Set(runState.contexts.map { $0.fields["timestamp"] }), [.string("2026-05-28T16:40:00Z")])
         XCTAssertEqual(runState.results.filter(\.isSuccess).count, 2)
 
-        let feedbackState = await coordinator.submitFeedback(selectedScenes: [RecoScene(id: 16, name: "冥想")], from: runState, forVirtualUserKey: "u_full_permission")
+        let feedbackState = await coordinator.submitFeedback(selectedScenes: [RecoScene(id: 16, name: "冥想")], from: runState)
         XCTAssertEqual(feedbackState.phase, RunPhase.retryingFeedback)
-        XCTAssertEqual(feedbackState.feedbackJobs.count, 1)
-        XCTAssertEqual(feedbackState.retryQueueCount, 1)
+        XCTAssertEqual(feedbackState.feedbackJobs.count, 2)
+        XCTAssertEqual(feedbackState.retryQueueCount, 2)
         let queuedCount = queue.count
-        XCTAssertEqual(queuedCount, 1)
+        XCTAssertEqual(queuedCount, 2)
         XCTAssertTrue(feedbackState.feedbackJobs.allSatisfy { $0.eventType == "correction" })
-        XCTAssertEqual(feedbackState.feedbackJobs.first?.userID, "device-demo:u_full_permission")
+        XCTAssertEqual(Set(feedbackState.feedbackJobs.map(\.userID)), Set(["device-demo:u_full_permission", "device-demo:u_no_location"]))
         XCTAssertFalse(feedbackState.feedbackJobs.contains { $0.userID == "device-demo:\(failingKey)" })
         XCTAssertNil(feedbackState.feedbackQuality?.dwellTimeSec)
         XCTAssertNil(feedbackState.feedbackQuality?.playedRatioPct)

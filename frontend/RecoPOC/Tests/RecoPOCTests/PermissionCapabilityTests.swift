@@ -120,7 +120,7 @@ final class PermissionCapabilityTests: XCTestCase {
     }
 
     @MainActor
-    func testHomeShowsFullAccessResultAndSubmitsUpToThreeTrueScenes() async throws {
+    func testHomeShowsFullAccessResultAndSubmitsTrueScenesForAllSuccessfulVirtualUsers() async throws {
         let api = FakeRecommendationAPIClient()
         var container = DependencyContainer.demo()
         container.apiClient = api
@@ -147,15 +147,21 @@ final class PermissionCapabilityTests: XCTestCase {
         XCTAssertEqual(model.homeScreen.selectedScenes, ["阅读", "冥想", "减压"])
         XCTAssertTrue(model.homeScreen.canSubmitFeedback)
 
+        let successfulUserIDs = Set(model.resultsScreen.groups.compactMap { group in
+            group.errorMessage == nil ? "device-test:\(group.userTitle)" : nil
+        })
+        let expectedFeedbackCount = successfulUserIDs.count * model.homeScreen.selectedScenes.count
+
         model.submitFeedbackSelection()
         for _ in 0..<50 {
-            if api.feedbackRequests.count == 3 { break }
+            if api.feedbackRequests.count == expectedFeedbackCount { break }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
 
-        XCTAssertEqual(api.feedbackRequests.map(\.acceptedScene), ["阅读", "冥想", "减压"])
-        XCTAssertEqual(Set(api.feedbackRequests.map(\.userID)), Set(["device-test:u_full_permission"]))
-        XCTAssertEqual(Set(api.feedbackRequests.map(\.requestID)).count, 1)
+        XCTAssertEqual(api.feedbackRequests.count, expectedFeedbackCount)
+        XCTAssertEqual(Set(api.feedbackRequests.map(\.acceptedScene)), Set(["阅读", "冥想", "减压"]))
+        XCTAssertEqual(Set(api.feedbackRequests.map(\.userID)), successfulUserIDs)
+        XCTAssertEqual(Set(api.feedbackRequests.map(\.requestID)).count, successfulUserIDs.count)
         XCTAssertTrue(api.feedbackRequests.allSatisfy { $0.eventType == "correction" })
         XCTAssertTrue(api.feedbackRequests.allSatisfy { $0.dwellTimeSec == nil && $0.playedRatioPct == nil && $0.nextAction == nil })
     }

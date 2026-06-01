@@ -33,7 +33,7 @@ final class RunCoordinatorTests: XCTestCase {
         XCTAssertEqual(phases.last, "results")
     }
 
-    func testSubmitFeedbackCreatesJobOnlyForFullAccessRecommendation() async {
+    func testSubmitFeedbackCreatesJobForEverySuccessfulRecommendation() async {
         let api = FakeRecommendationAPIClient(failedRecommendKeys: ["u_no_location"])
         let queue = FeedbackRetryQueue(retryDelay: 1)
         let coordinator = RunCoordinator(
@@ -46,19 +46,18 @@ final class RunCoordinatorTests: XCTestCase {
         )
 
         let builtIns = VirtualUserRegistry.defaultUsers(deviceUUID: "device-demo")
-        let users = [builtIns[0], builtIns[2]]
+        let users = [builtIns[0], builtIns[1], builtIns[2]]
         let runState = await coordinator.runRecommendation(virtualUsers: users, questionnaire: .sample)
         let selectedScene = SceneCatalog.all.first { $0.name == "阅读" }!
         let finalState = await coordinator.submitFeedback(selectedScene: selectedScene, from: runState)
 
-        XCTAssertEqual(finalState.feedbackJobs.count, 1)
-        XCTAssertEqual(api.feedbackRequests.count, 1)
-        XCTAssertEqual(api.feedbackRequests.first?.eventType, "correction")
-        XCTAssertEqual(api.feedbackRequests.first?.acceptedScene, "阅读")
-        XCTAssertEqual(api.feedbackRequests.first?.userID, "device-demo:u_full_permission")
-        XCTAssertNil(api.feedbackRequests.first?.dwellTimeSec)
-        XCTAssertNil(api.feedbackRequests.first?.playedRatioPct)
-        XCTAssertNil(api.feedbackRequests.first?.nextAction)
+        XCTAssertEqual(finalState.feedbackJobs.count, 2)
+        XCTAssertEqual(api.feedbackRequests.count, 2)
+        XCTAssertEqual(Set(api.feedbackRequests.map(\.userID)), Set(["device-demo:u_full_permission", "device-demo:u_minimal_context"]))
+        XCTAssertFalse(api.feedbackRequests.contains { $0.userID == "device-demo:u_no_location" })
+        XCTAssertTrue(api.feedbackRequests.allSatisfy { $0.eventType == "correction" })
+        XCTAssertTrue(api.feedbackRequests.allSatisfy { $0.acceptedScene == "阅读" })
+        XCTAssertTrue(api.feedbackRequests.allSatisfy { $0.dwellTimeSec == nil && $0.playedRatioPct == nil && $0.nextAction == nil })
         XCTAssertEqual(finalState.selectedTrueScene, "阅读")
         XCTAssertEqual(finalState.selectedTrueScenes, ["阅读"])
         XCTAssertEqual(finalState.phase, RunPhase.completed)
@@ -67,7 +66,7 @@ final class RunCoordinatorTests: XCTestCase {
         XCTAssertTrue(finalState.timingEvents.map { $0.phase }.contains("feedback_batch"))
     }
 
-    func testSubmitFeedbackCapsThreeScenesUsingSameFullAccessRequest() async {
+    func testSubmitFeedbackCapsThreeScenesPerSuccessfulRecommendation() async {
         let api = FakeRecommendationAPIClient()
         let queue = FeedbackRetryQueue(retryDelay: 1)
         let coordinator = RunCoordinator(
@@ -79,8 +78,36 @@ final class RunCoordinatorTests: XCTestCase {
             requestIDGenerator: TimestampRecommendationRequestIDGenerator()
         )
 
-        let user = VirtualUserRegistry.defaultUsers(deviceUUID: "device-demo")[0]
-        let runState = await coordinator.runRecommendation(virtualUsers: [user], questionnaire: .sample)
+        let users = Array(VirtualUserRegistry.defaultUsers(deviceUUID: "device-demo").prefix(2))
+        let runState = await coordinator.runRecommendation(virtualUsers: users, questionnaire: .sample)
+        let scenes = ["阅读", "冥想", "减压", "跑步"].compactMap(SceneCatalog.scene(named:))
+        let finalState = await coordinator.submitFeedback(selectedScenes: scenes, from: runState)
+
+        XCTAssertEqual(api.feedbackRequests.count, 6)
+        XCTAssertEqual(Set(api.feedbackRequests.map(\.userID)), Set(["device-demo:u_full_permission", "device-demo:u_minimal_context"]))
+        XCTAssertEqual(Set(api.feedbackRequests.map(\.requestID)), Set(["req_u_full_permission_1779986400", "req_u_minimal_context_1779986400"]))
+        for userID in Set(api.feedbackRequests.map(\.userID)) {
+            XCTAssertEqual(api.feedbackRequests.filter { $0.userID == userID }.map(\.acceptedScene), ["阅读", "冥想", "减压"])
+        }
+        XCTAssertTrue(api.feedbackRequests.allSatisfy { $0.eventType == "correction" })
+        XCTAssertTrue(api.feedbackRequests.allSatisfy { $0.dwellTimeSec == nil && $0.playedRatioPct == nil && $0.nextAction == nil })
+        XCTAssertEqual(finalState.selectedTrueScenes, ["阅读", "冥想", "减压"])
+    }
+
+    func testSubmitFeedbackForSpecificVirtualUserKeepsSingleResultScope() async {
+        let api = FakeRecommendationAPIClient()
+        let queue = FeedbackRetryQueue(retryDelay: 1)
+        let coordinator = RunCoordinator(
+            sensorAcquirer: FakeRawSensorAcquirer(result: .success(.sampleFullPermission)),
+            contextDeriver: VirtualContextDeriver(),
+            payloadMapper: BackendPayloadMapper(),
+            apiClient: api,
+            feedbackQueue: queue,
+            requestIDGenerator: TimestampRecommendationRequestIDGenerator()
+        )
+
+        let users = Array(VirtualUserRegistry.defaultUsers(deviceUUID: "device-demo").prefix(2))
+        let runState = await coordinator.runRecommendation(virtualUsers: users, questionnaire: .sample)
         let scenes = ["阅读", "冥想", "减压", "跑步"].compactMap(SceneCatalog.scene(named:))
         let finalState = await coordinator.submitFeedback(selectedScenes: scenes, from: runState, forVirtualUserKey: "u_full_permission")
 
@@ -88,9 +115,7 @@ final class RunCoordinatorTests: XCTestCase {
         XCTAssertEqual(api.feedbackRequests.map(\.acceptedScene), ["阅读", "冥想", "减压"])
         XCTAssertEqual(Set(api.feedbackRequests.map(\.userID)), Set(["device-demo:u_full_permission"]))
         XCTAssertEqual(Set(api.feedbackRequests.map(\.requestID)), Set(["req_u_full_permission_1779986400"]))
-        XCTAssertTrue(api.feedbackRequests.allSatisfy { $0.eventType == "correction" })
-        XCTAssertTrue(api.feedbackRequests.allSatisfy { $0.dwellTimeSec == nil && $0.playedRatioPct == nil && $0.nextAction == nil })
-        XCTAssertEqual(finalState.selectedTrueScenes, ["阅读", "冥想", "减压"])
+        XCTAssertEqual(finalState.feedbackJobs.count, 3)
     }
 
     func testSubmitFeedbackPreservesSelectedOptionalQualityValues() async {

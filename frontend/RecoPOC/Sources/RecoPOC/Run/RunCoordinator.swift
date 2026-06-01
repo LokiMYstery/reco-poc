@@ -101,13 +101,40 @@ public actor RunCoordinator {
     }
 
     public func submitFeedback(selectedScene: RecoScene, from state: RunState, quality: FeedbackQuality? = nil) async -> RunState {
-        await submitFeedback(selectedScenes: [selectedScene], from: state, forVirtualUserKey: "u_full_permission", quality: quality)
+        await submitFeedback(selectedScenes: [selectedScene], from: state, quality: quality)
+    }
+
+    public func submitFeedback(
+        selectedScenes: [RecoScene],
+        from state: RunState,
+        quality: FeedbackQuality? = nil
+    ) async -> RunState {
+        await submitFeedback(
+            selectedScenes: selectedScenes,
+            from: state,
+            targetResults: state.results.filter(\.isSuccess),
+            quality: quality
+        )
     }
 
     public func submitFeedback(
         selectedScenes: [RecoScene],
         from state: RunState,
         forVirtualUserKey virtualUserKey: String,
+        quality: FeedbackQuality? = nil
+    ) async -> RunState {
+        await submitFeedback(
+            selectedScenes: selectedScenes,
+            from: state,
+            targetResults: state.results.filter { $0.virtualUserKey == virtualUserKey && $0.isSuccess },
+            quality: quality
+        )
+    }
+
+    private func submitFeedback(
+        selectedScenes: [RecoScene],
+        from state: RunState,
+        targetResults: [RecommendationResult],
         quality: FeedbackQuality? = nil
     ) async -> RunState {
         var next = state
@@ -128,7 +155,7 @@ public actor RunCoordinator {
 
         guard
             !acceptedScenes.isEmpty,
-            let targetResult = state.results.first(where: { $0.virtualUserKey == virtualUserKey && $0.isSuccess })
+            !targetResults.isEmpty
         else {
             next.retryQueueCount = feedbackQueue.count
             next.retryJobs = feedbackQueue.allJobs
@@ -136,8 +163,10 @@ public actor RunCoordinator {
             return next
         }
 
-        let jobs = acceptedScenes.compactMap { scene -> FeedbackRequest? in
-            payloadMapper.feedbackPayload(result: targetResult, acceptedScene: scene, quality: next.feedbackQuality)
+        let jobs = targetResults.flatMap { result in
+            acceptedScenes.compactMap { scene -> FeedbackRequest? in
+                payloadMapper.feedbackPayload(result: result, acceptedScene: scene, quality: next.feedbackQuality)
+            }
         }
         next.feedbackJobs = jobs
 
@@ -175,7 +204,15 @@ public actor RunCoordinator {
                 scheduleRetry(for: retryJob)
             }
         }
-        next.timingEvents.append(TimingEvent(phase: "feedback_batch", startedAt: feedbackStart, endedAt: Date(), detail: "jobs=\(jobs.count);request_id=\(targetResult.requestID)"))
+        let requestIDs = targetResults.map(\.requestID).joined(separator: ",")
+        next.timingEvents.append(
+            TimingEvent(
+                phase: "feedback_batch",
+                startedAt: feedbackStart,
+                endedAt: Date(),
+                detail: "jobs=\(jobs.count);request_ids=\(requestIDs)"
+            )
+        )
         next.retryQueueCount = feedbackQueue.count
         next.retryJobs = feedbackQueue.allJobs
         next.phase = next.retryQueueCount > 0 ? .retryingFeedback : .completed

@@ -245,8 +245,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         guard
             homeScreen.canSubmitFeedback,
             let latestRunState,
-            let fullAccessResult = latestRunState.fullAccessResult,
-            fullAccessResult.isSuccess
+            latestRunState.results.contains(where: \.isSuccess)
         else { return }
 
         let selectedScenes = homeScreen.selectedScenes
@@ -259,8 +258,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         Task {
             let feedbackState = await runCoordinator.submitFeedback(
                 selectedScenes: Array(selectedScenes),
-                from: latestRunState,
-                forVirtualUserKey: fullAccessResult.virtualUserKey
+                from: latestRunState
             )
             applyFeedbackState(feedbackState)
         }
@@ -373,8 +371,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
     private func refreshHomeFeedbackSubmitState() {
         homeScreen.canSubmitFeedback =
             homeScreen.canSelectTrueScenes &&
-            homeScreen.featuredResult?.errorMessage == nil &&
-            homeScreen.featuredResult?.topRecommendation != nil &&
+            latestRunState?.results.contains(where: \.isSuccess) == true &&
             !homeScreen.selectedScenes.isEmpty &&
             homeScreen.selectedScenes.count <= homeScreen.maxTrueSceneSelections
     }
@@ -430,12 +427,19 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         ]
         let featuredResult = state.fullAccessResult.map(resultGroup(from:))
         homeScreen.featuredResult = featuredResult
+        let successfulResultCount = state.results.filter(\.isSuccess).count
         if let featuredResult, featuredResult.errorMessage == nil {
-            homeScreen.latestResultsSummary = "Full-access result is ready. Select up to \(homeScreen.maxTrueSceneSelections) true scenes below."
+            homeScreen.latestResultsSummary = "Full-access result is ready. Select up to \(homeScreen.maxTrueSceneSelections) true scenes below; feedback will fan out to \(successfulResultCount) successful virtual user results."
+            homeScreen.canSelectTrueScenes = true
+        } else if let featuredResult, successfulResultCount > 0 {
+            homeScreen.latestResultsSummary = "Full-access result failed: \(featuredResult.errorMessage ?? "No recommendations available."). Select true scenes for the \(successfulResultCount) successful virtual user results."
             homeScreen.canSelectTrueScenes = true
         } else if let featuredResult {
             homeScreen.latestResultsSummary = "Full-access result failed: \(featuredResult.errorMessage ?? "No recommendations available.")"
             homeScreen.canSelectTrueScenes = false
+        } else if successfulResultCount > 0 {
+            homeScreen.latestResultsSummary = "Full-access result was not returned, but \(successfulResultCount) virtual user results are ready for true-scene feedback."
+            homeScreen.canSelectTrueScenes = true
         } else {
             homeScreen.latestResultsSummary = "Full-access result was not returned for this run."
             homeScreen.canSelectTrueScenes = false
@@ -473,8 +477,8 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         ]
         diagnosticsScreen.timingEvents = timingEvents(from: state.timingEvents)
         diagnosticsScreen.notes = [
-            "Feedback uses event_type=correction for the full-access virtual user result shown on Home.",
-            "Up to 3 selected true scenes are sent as separate feedback payloads with the same user_id and request_id.",
+            "Feedback uses event_type=correction for every successful virtual user result.",
+            "Up to 3 selected true scenes are sent per successful virtual user, using that virtual user's user_id and request_id.",
             "Retry queue is in-memory for the current app process and is not cleared by starting another run.",
             "No impression event is emitted from this UI shell."
         ]
@@ -812,7 +816,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
                 isReady: false
             ),
             primaryActionTitle: "Start Recommendation Run",
-            flowInstructions: "Simple flow: run a recommendation, review the full-access result, then select up to 3 scenes you truly want.",
+            flowInstructions: "Simple flow: run a recommendation, review results, then select up to 3 scenes you truly want.",
             progressSummary: "No run started yet.",
             runStages: [
                 .init(id: "acquire", title: "Data acquisition", detail: "Waiting", style: .idle),
@@ -829,7 +833,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             feedbackSubmitTitle: "Submit correction feedback",
             sensorSnapshotSummary: "Start a recommendation run to see the sensor inputs used for that request.",
             sensorSnapshotRows: [],
-            latestResultsSummary: "The full-access virtual user result will appear here after the first run.",
+            latestResultsSummary: "The full-access virtual user result appears here after the first run; feedback is submitted for all successful virtual users.",
             retryStatus: nil,
             canOpenResults: false
         )
