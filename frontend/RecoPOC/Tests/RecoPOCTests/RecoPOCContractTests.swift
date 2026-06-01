@@ -98,9 +98,9 @@ final class RecoPOCContractTests: XCTestCase {
         XCTAssertEqual(lhsKey.count, "u_ad_hoc_".count + 12)
     }
 
-    func testFreezeWindowClampsAt15Seconds() {
-        let freezeWindow = Duration.seconds(15)
-        XCTAssertEqual(freezeWindow, .seconds(15))
+    func testFreezeWindowClampsAt60Seconds() {
+        let freezeWindow = Duration.seconds(60)
+        XCTAssertEqual(freezeWindow, .seconds(60))
     }
 
     func testOneSnapshotCanDeriveManyContextsWithoutMutation() {

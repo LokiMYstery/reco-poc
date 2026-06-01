@@ -36,6 +36,11 @@ struct SetupQuestionnairePreferences: Codable, Equatable, Sendable {
     var userTag: String
 }
 
+private struct RunLogExportPayload: Codable, Equatable, Sendable {
+    var generatedAt: Date
+    var runState: RunState
+}
+
 protocol SetupPreferencesStoring {
     func loadSetupPreferences() -> SetupPreferences?
     func saveSetupPreferences(_ preferences: SetupPreferences)
@@ -214,7 +219,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         homeScreen.sensorSnapshotSummary = "Acquiring current sensor snapshot for this request…"
         homeScreen.sensorSnapshotRows = []
         homeScreen.runStages = [
-            .init(id: "acquire", title: "Data acquisition", detail: "Starting 15s bounded snapshot", style: .inFlight),
+            .init(id: "acquire", title: "Data acquisition", detail: "Starting up-to-60s parallel sensor snapshot", style: .inFlight),
             .init(id: "derive", title: "Derive virtual contexts", detail: "Waiting for snapshot", style: .idle),
             .init(id: "recommend", title: "Recommend fan-out", detail: "Waiting for virtual contexts", style: .idle),
             .init(id: "feedback", title: "Feedback gate", detail: "Waiting for true scene selection", style: .idle)
@@ -393,7 +398,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         latestRunState = state
         homeScreen.progressSummary = "Snapshot frozen, \(state.contexts.count) virtual contexts derived, \(state.results.filter(\.isSuccess).count)/\(state.results.count) recommendations succeeded."
         homeScreen.runStages = [
-            .init(id: "acquire", title: "Data acquisition", detail: state.snapshot == nil ? "No snapshot" : "15s deadline respected", style: state.snapshot == nil ? .failure : .success),
+            .init(id: "acquire", title: "Data acquisition", detail: state.snapshot == nil ? "No snapshot" : "60s upper bound respected", style: state.snapshot == nil ? .failure : .success),
             .init(id: "derive", title: "Derive virtual contexts", detail: "contexts=\(state.contexts.count)", style: .success),
             .init(id: "recommend", title: "Recommend fan-out", detail: "success=\(state.results.filter(\.isSuccess).count); failure=\(state.results.filter { !$0.isSuccess }.count)", style: .success),
             .init(id: "feedback", title: "Feedback gate", detail: "Waiting for true scene selection", style: .idle)
@@ -411,6 +416,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         resultsScreen.feedbackQuality.dwellTimeSec = nil
         diagnosticsScreen.sensorStatuses = sensorStatuses(from: state.snapshot)
         diagnosticsScreen.timingEvents = timingEvents(from: state.timingEvents)
+        diagnosticsScreen.runLogExport = runLogExport(from: state)
     }
 
     private func applyFeedbackState(_ state: RunState) {
@@ -431,6 +437,8 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             "Retry queue is in-memory for the current app process and is not cleared by starting another run.",
             "No impression event is emitted from this UI shell."
         ]
+        diagnosticsScreen.sensorStatuses = sensorStatuses(from: state.snapshot)
+        diagnosticsScreen.runLogExport = runLogExport(from: state)
     }
 
     private func applyPersistedSetupPreferences() {
@@ -617,11 +625,40 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         }
     }
 
+    private func runLogExport(from state: RunState) -> RunLogExportModel? {
+        let payload = RunLogExportPayload(generatedAt: Date(), runState: state)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+
+        do {
+            let data = try encoder.encode(payload)
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RecoPOCLogs", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let fileURL = directory.appendingPathComponent(Self.runLogFileName(generatedAt: payload.generatedAt))
+            try data.write(to: fileURL, options: .atomic)
+            let providerCount = state.snapshot?.acquisitionTrace?.providers.count ?? 0
+            return RunLogExportModel(
+                fileURL: fileURL,
+                summary: "JSON includes snapshot, timing events, provider traces, and recommendation errors. Provider traces: \(providerCount)."
+            )
+        } catch {
+            return nil
+        }
+    }
+
     private static func snapshotTimestamp(_ date: Date, timezoneID: String) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         formatter.timeZone = TimeZone(identifier: timezoneID) ?? .current
         return formatter.string(from: date)
+    }
+
+    private static func runLogFileName(generatedAt: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return "reco-poc-run-log-\(formatter.string(from: generatedAt)).json"
     }
 
     private static func weekdayLabel(_ weekday: Int) -> String {
@@ -812,14 +849,14 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
                 .init(id: "network", title: "Network", status: "Success", durationLabel: "31 ms"),
                 .init(id: "location", title: "Location / Place", status: "Success", durationLabel: "6.2 s"),
                 .init(id: "motion", title: "Motion", status: "Success", durationLabel: "1.4 s"),
-                .init(id: "health", title: "Health", status: "Unavailable / placeholder", durationLabel: "15 s deadline"),
+                .init(id: "health", title: "Health", status: "Unavailable / placeholder", durationLabel: "60 s upper bound"),
                 .init(id: "noise", title: "Noise", status: "Skipped", durationLabel: "0 ms"),
                 .init(id: "calendar", title: "Calendar", status: "Denied", durationLabel: "0 ms")
             ],
             timingEvents: [
                 .init(id: "open", title: "App opened", timestampLabel: "09:40:00", detail: "Initial shell visible"),
                 .init(id: "setup", title: "Setup checked", timestampLabel: "09:40:02", detail: "Willingness and questionnaire loaded"),
-                .init(id: "acquire", title: "Acquisition started", timestampLabel: "09:40:12", detail: "15s total deadline"),
+                .init(id: "acquire", title: "Acquisition started", timestampLabel: "09:40:12", detail: "60s total upper bound"),
                 .init(id: "freeze", title: "Raw snapshot frozen", timestampLabel: "09:40:21", detail: "Completed at 9.6s"),
                 .init(id: "virtual", title: "Virtual contexts derived", timestampLabel: "09:40:21", detail: "Built-in registry + optional ad hoc user"),
                 .init(id: "recommend", title: "Recommend responses received", timestampLabel: "09:40:22", detail: "15 success / 1 failed / 1 queued"),
@@ -832,7 +869,8 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
                 "This shell intentionally keeps retry state in memory only.",
                 "True scene selection is sourced from the shared 18-scene domain catalog.",
                 "Replace demo state with Lane 4 coordinator and Lane 1 domain catalog once those modules land."
-            ]
+            ],
+            runLogExport: nil
         )
     }
 

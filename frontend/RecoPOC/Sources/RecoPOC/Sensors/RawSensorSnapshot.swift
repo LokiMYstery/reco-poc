@@ -17,6 +17,104 @@ public struct AcquisitionStatus: Codable, Equatable, Sendable {
     }
 }
 
+public struct SensorStepTrace: Codable, Equatable, Sendable {
+    public var name: String
+    public var startedAt: Date
+    public var endedAt: Date
+    public var durationMs: Int
+    public var availability: AcquisitionAvailability
+    public var reasonCode: String?
+    public var detail: String?
+
+    public init(
+        name: String,
+        startedAt: Date,
+        endedAt: Date,
+        availability: AcquisitionAvailability,
+        reasonCode: String? = nil,
+        detail: String? = nil
+    ) {
+        self.name = name
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.durationMs = Self.durationMs(from: startedAt, to: endedAt)
+        self.availability = availability
+        self.reasonCode = reasonCode
+        self.detail = detail
+    }
+
+    private static func durationMs(from startedAt: Date, to endedAt: Date) -> Int {
+        Int(max(0, endedAt.timeIntervalSince(startedAt) * 1_000))
+    }
+}
+
+public struct SensorProviderTrace: Codable, Equatable, Sendable {
+    public var sensor: RawSensorName
+    public var startedAt: Date
+    public var endedAt: Date
+    public var durationMs: Int
+    public var availability: AcquisitionAvailability
+    public var reasonCode: String?
+    public var detail: String?
+    public var valueSummary: [String: String]
+    public var steps: [SensorStepTrace]
+
+    public init(
+        sensor: RawSensorName,
+        startedAt: Date,
+        endedAt: Date,
+        availability: AcquisitionAvailability,
+        reasonCode: String? = nil,
+        detail: String? = nil,
+        valueSummary: [String: String] = [:],
+        steps: [SensorStepTrace] = []
+    ) {
+        self.sensor = sensor
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.durationMs = Self.durationMs(from: startedAt, to: endedAt)
+        self.availability = availability
+        self.reasonCode = reasonCode
+        self.detail = detail
+        self.valueSummary = valueSummary
+        self.steps = steps
+    }
+
+    public var diagnosticMessage: String {
+        if let reasonCode, let detail, !detail.isEmpty {
+            return "\(reasonCode): \(detail)"
+        }
+        if let reasonCode { return reasonCode }
+        if let detail, !detail.isEmpty { return detail }
+        return availability == .available ? "captured" : availability.rawValue
+    }
+
+    private static func durationMs(from startedAt: Date, to endedAt: Date) -> Int {
+        Int(max(0, endedAt.timeIntervalSince(startedAt) * 1_000))
+    }
+}
+
+public struct SensorAcquisitionTrace: Codable, Equatable, Sendable {
+    public var startedAt: Date
+    public var endedAt: Date
+    public var deadline: Date
+    public var durationMs: Int
+    public var providers: [SensorProviderTrace]
+
+    public init(
+        startedAt: Date,
+        endedAt: Date,
+        deadline: Date,
+        providers: [SensorProviderTrace]
+    ) {
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.deadline = deadline
+        self.durationMs = Int(max(0, endedAt.timeIntervalSince(startedAt) * 1_000))
+        self.providers = providers.sorted { $0.sensor.rawValue < $1.sensor.rawValue }
+    }
+}
+
 public enum RawSensorName: String, Codable, CaseIterable, Hashable, Sendable {
     case time
     case location
@@ -112,6 +210,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
     public var weather: String?
     public var appEvent: String
     public var statuses: [String: AcquisitionStatus]
+    public var acquisitionTrace: SensorAcquisitionTrace?
 
     public init(
         capturedAt: Date,
@@ -141,6 +240,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
         weather: String? = nil,
         appEvent: String = "打开推荐页",
         statuses: [String: AcquisitionStatus] = [:],
+        acquisitionTrace: SensorAcquisitionTrace? = nil,
         startedAt: Date? = nil,
         frozenAt: Date? = nil,
         deadline: Date? = nil,
@@ -173,16 +273,26 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
         self.weather = weather
         self.appEvent = appEvent
         self.statuses = statuses
+        self.acquisitionTrace = acquisitionTrace
         self.startedAt = startedAt ?? capturedAt
         self.frozenAt = frozenAt ?? capturedAt
         self.deadline = deadline ?? (startedAt ?? capturedAt).addingTimeInterval(RawSensorFreezer.deadlineSeconds)
         self.fields = fields.sorted { $0.name.rawValue < $1.name.rawValue }
     }
 
-    public init(startedAt: Date, frozenAt: Date, deadline: Date, fields: [RawSensorField]) {
+    public init(
+        startedAt: Date,
+        frozenAt: Date,
+        deadline: Date,
+        fields: [RawSensorField],
+        acquisitionTrace: SensorAcquisitionTrace? = nil
+    ) {
         let sortedFields = fields.sorted { $0.name.rawValue < $1.name.rawValue }
         let fieldMap = Dictionary(uniqueKeysWithValues: sortedFields.map { ($0.name, $0) })
         let calendar = Calendar(identifier: .gregorian)
+        let tracesBySensor = Dictionary(
+            uniqueKeysWithValues: (acquisitionTrace?.providers ?? []).map { ($0.sensor, $0) }
+        )
 
         let network = Self.stringValue(for: .connectivity, key: "network", in: fieldMap) ?? "任意"
         let bluetooth = Self.stringValue(for: .connectivity, key: "bluetooth", in: fieldMap) ?? "任意"
@@ -200,7 +310,17 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
         let noiseClass = Self.stringValue(for: .heading, key: "noise_class", in: fieldMap) ?? Self.stringValue(for: .microphone, key: "noise_class", in: fieldMap)
         let calendarKeyword = Self.stringValue(for: .heading, key: "calendar_keyword", in: fieldMap) ?? Self.stringValue(for: .calendar, key: "calendar_keyword", in: fieldMap)
         let weather = Self.stringValue(for: .weather, key: "weather", in: fieldMap)
-        let statuses = Dictionary(uniqueKeysWithValues: sortedFields.map { ($0.name.rawValue, AcquisitionStatus($0.state.availability)) })
+        let statuses = Dictionary(
+            uniqueKeysWithValues: sortedFields.map {
+                (
+                    $0.name.rawValue,
+                    AcquisitionStatus(
+                        $0.state.availability,
+                        message: tracesBySensor[$0.name]?.diagnosticMessage ?? $0.state.diagnosticMessage
+                    )
+                )
+            }
+        )
 
         self.init(
             capturedAt: frozenAt,
@@ -229,6 +349,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
             calendarAvailable: calendarKeyword != nil && (Self.isCaptured(fieldMap[.heading]) || Self.isCaptured(fieldMap[.calendar])),
             weather: weather,
             statuses: statuses,
+            acquisitionTrace: acquisitionTrace,
             startedAt: startedAt,
             frozenAt: frozenAt,
             deadline: deadline,
@@ -311,6 +432,17 @@ extension RawSensorFieldState {
         case .stale: return .stale
         }
     }
+
+    var diagnosticMessage: String? {
+        switch self {
+        case .captured:
+            return "captured"
+        case .unavailable(let reason):
+            return reason.rawValue
+        case .stale(let reason):
+            return reason.rawValue
+        }
+    }
 }
 
 private extension RawSensorName {
@@ -328,7 +460,7 @@ public struct FakeRawSensorAcquirer: RawSensorAcquiring {
         self.result = result
     }
 
-    public func acquireSnapshot(deadline: TimeInterval = 15) async -> RawSensorSnapshot {
+    public func acquireSnapshot(deadline: TimeInterval = RawSensorFreezer.deadlineSeconds) async -> RawSensorSnapshot {
         _ = deadline
         switch result {
         case let .success(snapshot):
@@ -338,7 +470,7 @@ public struct FakeRawSensorAcquirer: RawSensorAcquiring {
 }
 
 public struct RawSensorFreezer: Sendable {
-    public static let deadlineSeconds: TimeInterval = 15
+    public static let deadlineSeconds: TimeInterval = 60
 
     public init() {}
 

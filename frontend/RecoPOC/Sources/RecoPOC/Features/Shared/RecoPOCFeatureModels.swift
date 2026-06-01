@@ -159,8 +159,14 @@ struct TimingEventRowModel: Identifiable {
     var detail: String
 }
 
+struct RunLogExportModel {
+    var fileURL: URL
+    var summary: String
+}
+
 struct DiagnosticsScreenModel {
     var sensorStatuses: [SensorStatusRowModel]
     var timingEvents: [TimingEventRowModel]
     var notes: [String]
+    var runLogExport: RunLogExportModel?
 }

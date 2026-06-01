@@ -260,15 +260,6 @@ public final class NativeCapablePermissionCapabilityStatusProvider:
     override statusOverride: CLAuthorizationStatus? = nil,
     requested: Bool = false
   ) -> PermissionCapabilityStatus {
-    guard CLLocationManager.locationServicesEnabled() else {
-      return PermissionCapabilityStatus(
-        id: "location",
-        statusText: "Location Services disabled",
-        detailText: "Enable Location Services in Settings before this app can request When-In-Use access.",
-        readiness: .blocked
-      )
-    }
-
     let manager = CLLocationManager()
     let status = statusOverride ?? manager.authorizationStatus
     switch status {
@@ -734,11 +725,6 @@ private final class LocationPermissionRequester: NSObject, CLLocationManagerDele
 
   @MainActor
   private func startWhenInUseAuthorization(_ box: SingleResumeBox<CLAuthorizationStatus>) {
-    guard CLLocationManager.locationServicesEnabled() else {
-      box.resume(returning: manager.authorizationStatus)
-      return
-    }
-
     let status = manager.authorizationStatus
     guard status == .notDetermined else {
       box.resume(returning: status)
