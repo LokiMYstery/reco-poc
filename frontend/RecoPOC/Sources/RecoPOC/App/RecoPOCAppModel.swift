@@ -18,8 +18,57 @@ protocol RecoPOCAppModeling: ObservableObject {
     func setUserTag(_ value: String)
     func startRun()
     func selectTrueScene(_ scene: String)
+    func selectFeedbackPlayedRatioPct(_ value: Double?)
+    func selectFeedbackNextAction(_ value: String?)
     func submitFeedbackSelection()
     func retryFailedFeedbackNow()
+}
+
+struct SetupPreferences: Codable, Equatable, Sendable {
+    var permissionWillingnessByID: [String: PermissionWillingnessOption]
+    var questionnaire: SetupQuestionnairePreferences
+}
+
+struct SetupQuestionnairePreferences: Codable, Equatable, Sendable {
+    var isSkipped: Bool
+    var primaryIntent: String?
+    var additionalNeeds: [String]
+    var userTag: String
+}
+
+private struct RunLogExportPayload: Codable, Equatable, Sendable {
+    var generatedAt: Date
+    var runState: RunState
+}
+
+protocol SetupPreferencesStoring {
+    func loadSetupPreferences() -> SetupPreferences?
+    func saveSetupPreferences(_ preferences: SetupPreferences)
+}
+
+final class UserDefaultsSetupPreferencesStore: SetupPreferencesStoring {
+    private let userDefaults: UserDefaults
+    private let key: String
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+
+    init(
+        userDefaults: UserDefaults = .standard,
+        key: String = "RecoPOC.setup.preferences.v1"
+    ) {
+        self.userDefaults = userDefaults
+        self.key = key
+    }
+
+    func loadSetupPreferences() -> SetupPreferences? {
+        guard let data = userDefaults.data(forKey: key) else { return nil }
+        return try? decoder.decode(SetupPreferences.self, from: data)
+    }
+
+    func saveSetupPreferences(_ preferences: SetupPreferences) {
+        guard let data = try? encoder.encode(preferences) else { return }
+        userDefaults.set(data, forKey: key)
+    }
 }
 
 @MainActor
@@ -33,12 +82,18 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
     private let container: DependencyContainer
     private let runCoordinator: RunCoordinator
     private let deviceUUID: String
+    private let setupPreferencesStore: any SetupPreferencesStoring
     private var latestRunState: RunState?
 
-    init(container: DependencyContainer = .demo(), deviceUUID: String? = nil) {
+    init(
+        container: DependencyContainer = .demo(),
+        deviceUUID: String? = nil,
+        setupPreferencesStore: any SetupPreferencesStoring = UserDefaultsSetupPreferencesStore()
+    ) {
         self.container = container
         self.runCoordinator = container.makeRunCoordinator()
         self.deviceUUID = deviceUUID ?? container.installIdentityStore.stableDeviceUUID()
+        self.setupPreferencesStore = setupPreferencesStore
 
         let intents = InitialNeed.allCases.map(\.rawValue)
         let userTags = UserTag.allCases.map(\.rawValue)
@@ -49,15 +104,22 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
                 detail: "Granting more signals here lets the experiment derive missing-permission virtual users later.",
                 isReady: false
             ),
+            capabilityGate: SetupCapabilityGateModel(
+                title: "Loading host/capability gate",
+                summary: "Resolving baseline-safe vs native-capable setup path.",
+                detail: "Setup owns permission/capability state; recommendation runs stay prompt-free.",
+                readiness: .optional
+            ),
             permissions: [
-                .init(id: "location", title: "Location / Precise Location", signalSummary: "place_type, latitude, longitude", systemStatus: "Authorized When In Use", willingness: .wouldGrant),
-                .init(id: "motion", title: "Motion & Fitness", signalSummary: "activity_state", systemStatus: "Authorized", willingness: .wouldGrant),
-                .init(id: "health", title: "HealthKit", signalSummary: "heart_rate, steps, sleep", systemStatus: "Missing entitlement / placeholder", willingness: .unsure),
-                .init(id: "microphone", title: "Microphone / Noise", signalSummary: "noise_class", systemStatus: "Not Determined", willingness: .wouldNotGrant),
-                .init(id: "calendar", title: "Calendar", signalSummary: "calendar keyword", systemStatus: "Denied", willingness: .wouldNotGrant),
-                .init(id: "audio_route", title: "Audio Route", signalSummary: "bluetooth-like output", systemStatus: "Available", willingness: .wouldGrant),
-                .init(id: "network", title: "Network", signalSummary: "wifi / cellular quality", systemStatus: "Available", willingness: .wouldGrant),
-                .init(id: "questionnaire", title: "Questionnaire Intent", signalSummary: "initial_need, initial_needs, user_tag", systemStatus: "Optional", willingness: .unsure)
+                .init(id: "location", title: "Location / Precise Location", signalSummary: "place_type, latitude, longitude", systemStatus: "Loading…", systemDetail: nil, willingness: .wouldGrant),
+                .init(id: "motion", title: "Motion & Fitness", signalSummary: "activity_state", systemStatus: "Loading…", systemDetail: nil, willingness: .wouldGrant),
+                .init(id: "health", title: "HealthKit", signalSummary: "heart_rate, steps, sleep", systemStatus: "Loading…", systemDetail: nil, willingness: .unsure),
+                .init(id: "microphone", title: "Microphone / Noise", signalSummary: "noise_class", systemStatus: "Loading…", systemDetail: nil, willingness: .wouldNotGrant),
+                .init(id: "calendar", title: "Calendar", signalSummary: "calendar keyword", systemStatus: "Loading…", systemDetail: nil, willingness: .wouldNotGrant),
+                .init(id: "weather", title: "WeatherKit", signalSummary: "weather", systemStatus: "Loading…", systemDetail: nil, willingness: .wouldGrant),
+                .init(id: "audio_route", title: "Audio Route", signalSummary: "bluetooth-like output", systemStatus: "Loading…", systemDetail: nil, willingness: .wouldGrant),
+                .init(id: "network", title: "Network", signalSummary: "wifi / cellular quality", systemStatus: "Loading…", systemDetail: nil, willingness: .wouldGrant),
+                .init(id: "questionnaire", title: "Questionnaire Intent", signalSummary: "initial_need, initial_needs, user_tag", systemStatus: "Loading…", systemDetail: nil, willingness: .unsure)
             ],
             questionnaire: QuestionnaireEditorModel(
                 isSkipped: false,
@@ -71,7 +133,9 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             explanation: [
                 "The real subject should grant permissions where possible for richer raw snapshots.",
                 "Virtual users simulate online missing-data scenarios by masking one frozen snapshot.",
-                "Questionnaire intent is optional and can be edited later without blocking runs."
+                "Questionnaire intent is optional and can be edited later without blocking runs.",
+                "Tap Check / Request in Setup to show system prompts; WeatherKit is entitlement-only and has no prompt.",
+                "RunCoordinator stays prompt-free; setup owns host/capability status and permission maintenance state."
             ]
         )
 
@@ -79,6 +143,8 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         resultsScreen = DemoRecoPOCAppModel.makeResultsScreen(sceneOptions: SceneCatalog.names)
         diagnosticsScreen = DemoRecoPOCAppModel.makeDiagnosticsScreen()
         virtualUsers = []
+        applyPersistedSetupPreferences()
+        refreshPermissionCapabilityStatuses()
         syncDerivedState()
     }
 
@@ -91,12 +157,24 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
 
     func requestPermissionMaintenance(for groupID: String) {
         guard let index = setupScreen.permissions.firstIndex(where: { $0.id == groupID }) else { return }
-        setupScreen.permissions[index].systemStatus = "Open in Settings / Placeholder"
+        let provider = container.permissionCapabilityStatusProvider
+        setupScreen.permissions[index].systemStatus = provider.maintenanceLabel(for: groupID)
+        setupScreen.permissions[index].systemDetail = "Waiting for iOS authorization result…"
+
+        Task { [weak self] in
+            let status = await provider.requestMaintenance(for: groupID)
+            guard let self else { return }
+            self.refreshPermissionCapabilityStatuses()
+            guard let index = self.setupScreen.permissions.firstIndex(where: { $0.id == groupID }) else { return }
+            self.setupScreen.permissions[index].systemStatus = status.statusText
+            self.setupScreen.permissions[index].systemDetail = status.detailText
+        }
     }
 
     func updateWillingness(for groupID: String, to option: PermissionWillingnessOption) {
         guard let index = setupScreen.permissions.firstIndex(where: { $0.id == groupID }) else { return }
         setupScreen.permissions[index].willingness = option
+        persistSetupPreferences()
         syncDerivedState()
     }
 
@@ -107,12 +185,14 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             setupScreen.questionnaire.additionalNeeds.removeAll()
             setupScreen.questionnaire.userTag = UserTag.any.rawValue
         }
+        persistSetupPreferences()
         syncDerivedState()
     }
 
     func setPrimaryIntent(_ value: String?) {
         guard !setupScreen.questionnaire.isSkipped else { return }
         setupScreen.questionnaire.primaryIntent = value
+        persistSetupPreferences()
         syncDerivedState()
     }
 
@@ -123,24 +203,29 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         } else {
             setupScreen.questionnaire.additionalNeeds.append(value)
         }
+        persistSetupPreferences()
         syncDerivedState()
     }
 
     func setUserTag(_ value: String) {
         guard !setupScreen.questionnaire.isSkipped else { return }
         setupScreen.questionnaire.userTag = value
+        persistSetupPreferences()
         syncDerivedState()
     }
 
     func startRun() {
         homeScreen.progressSummary = "Recommendation run in progress."
+        homeScreen.sensorSnapshotSummary = "Acquiring current sensor snapshot for this request…"
+        homeScreen.sensorSnapshotRows = []
         homeScreen.runStages = [
-            .init(id: "acquire", title: "Data acquisition", detail: "Starting 15s bounded snapshot", style: .inFlight),
+            .init(id: "acquire", title: "Data acquisition", detail: "Starting up-to-60s parallel sensor snapshot", style: .inFlight),
             .init(id: "derive", title: "Derive virtual contexts", detail: "Waiting for snapshot", style: .idle),
             .init(id: "recommend", title: "Recommend fan-out", detail: "Waiting for virtual contexts", style: .idle),
             .init(id: "feedback", title: "Feedback gate", detail: "Waiting for true scene selection", style: .idle)
         ]
         homeScreen.canOpenResults = false
+        resetFeedbackSelections()
 
         let users = currentVirtualUsers()
         let questionnaire = currentQuestionnaireState()
@@ -155,6 +240,14 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         resultsScreen.selectedScene = scene
     }
 
+    func selectFeedbackPlayedRatioPct(_ value: Double?) {
+        resultsScreen.feedbackQuality.selectedPlayedRatioPct = value
+    }
+
+    func selectFeedbackNextAction(_ value: String?) {
+        resultsScreen.feedbackQuality.selectedNextAction = value
+    }
+
     func submitFeedbackSelection() {
         guard
             let selectedSceneName = resultsScreen.selectedScene,
@@ -162,8 +255,18 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             let latestRunState
         else { return }
 
+        let quality = FeedbackQuality(
+            dwellTimeSec: nil,
+            playedRatioPct: resultsScreen.feedbackQuality.selectedPlayedRatioPct,
+            nextAction: resultsScreen.feedbackQuality.selectedNextAction
+        )
+
         Task {
-            let feedbackState = await runCoordinator.submitFeedback(selectedScene: selectedScene, from: latestRunState)
+            let feedbackState = await runCoordinator.submitFeedback(
+                selectedScene: selectedScene,
+                from: latestRunState,
+                quality: quality.isEmpty ? nil : quality
+            )
             applyFeedbackState(feedbackState)
         }
     }
@@ -179,6 +282,42 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
 
     private func refreshHomeBanner() {
         homeScreen.setupBanner = setupScreen.banner
+    }
+
+    private func refreshPermissionCapabilityStatuses() {
+        let snapshot = container.permissionCapabilityStatusProvider.snapshot()
+        setupScreen.capabilityGate = SetupCapabilityGateModel(
+            title: snapshot.gate.title,
+            summary: snapshot.gate.summary,
+            detail: snapshot.gate.detail,
+            readiness: readiness(from: snapshot.gate.readiness)
+        )
+
+        let statusesByID = Dictionary(uniqueKeysWithValues: snapshot.permissions.map { ($0.id, $0) })
+        for index in setupScreen.permissions.indices {
+            guard let status = statusesByID[setupScreen.permissions[index].id] else { continue }
+            setupScreen.permissions[index].systemStatus = status.statusText
+            setupScreen.permissions[index].systemDetail = status.detailText
+        }
+
+        setupScreen.banner.isReady = snapshot.permissions.allSatisfy { status in
+            switch status.readiness {
+            case .available, .optional:
+                return true
+            case .limited, .blocked, .requiresHost:
+                return false
+            }
+        }
+
+        if setupScreen.banner.isReady {
+            setupScreen.banner.title = "Setup ready"
+            setupScreen.banner.detail = "Baseline-safe capabilities are available for the next run."
+        } else {
+            setupScreen.banner.title = "Setup is skippable but recommended"
+            setupScreen.banner.detail = snapshot.gate.summary
+        }
+
+        refreshHomeBanner()
     }
 
     private func syncDerivedState() {
@@ -259,22 +398,32 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         latestRunState = state
         homeScreen.progressSummary = "Snapshot frozen, \(state.contexts.count) virtual contexts derived, \(state.results.filter(\.isSuccess).count)/\(state.results.count) recommendations succeeded."
         homeScreen.runStages = [
-            .init(id: "acquire", title: "Data acquisition", detail: state.snapshot == nil ? "No snapshot" : "15s deadline respected", style: state.snapshot == nil ? .failure : .success),
+            .init(id: "acquire", title: "Data acquisition", detail: state.snapshot == nil ? "No snapshot" : "60s upper bound respected", style: state.snapshot == nil ? .failure : .success),
             .init(id: "derive", title: "Derive virtual contexts", detail: "contexts=\(state.contexts.count)", style: .success),
             .init(id: "recommend", title: "Recommend fan-out", detail: "success=\(state.results.filter(\.isSuccess).count); failure=\(state.results.filter { !$0.isSuccess }.count)", style: .success),
             .init(id: "feedback", title: "Feedback gate", detail: "Waiting for true scene selection", style: .idle)
         ]
         homeScreen.latestResultsSummary = "Top-1 is ready for true-scene feedback across successful virtual users."
         homeScreen.canOpenResults = true
+        if let snapshot = state.snapshot {
+            homeScreen.sensorSnapshotSummary = "Sensor snapshot captured at \(Self.snapshotTimestamp(snapshot.capturedAt, timezoneID: snapshot.timezone))."
+            homeScreen.sensorSnapshotRows = sensorSnapshotRows(from: snapshot)
+        } else {
+            homeScreen.sensorSnapshotSummary = "No sensor snapshot was captured for this run."
+            homeScreen.sensorSnapshotRows = []
+        }
         resultsScreen.groups = state.results.map(resultGroup(from:))
+        resultsScreen.feedbackQuality.dwellTimeSec = nil
         diagnosticsScreen.sensorStatuses = sensorStatuses(from: state.snapshot)
         diagnosticsScreen.timingEvents = timingEvents(from: state.timingEvents)
+        diagnosticsScreen.runLogExport = runLogExport(from: state)
     }
 
     private func applyFeedbackState(_ state: RunState) {
         latestRunState = state
         let status = retryStatus(from: state.retryJobs)
         resultsScreen.feedbackStatus = status
+        resultsScreen.feedbackQuality.dwellTimeSec = state.feedbackQuality?.dwellTimeSec
         homeScreen.retryStatus = status
         homeScreen.runStages = [
             .init(id: "acquire", title: "Data acquisition", detail: "Snapshot already frozen", style: .success),
@@ -287,6 +436,155 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             "Feedback uses event_type=correction for every successful result group.",
             "Retry queue is in-memory for the current app process and is not cleared by starting another run.",
             "No impression event is emitted from this UI shell."
+        ]
+        diagnosticsScreen.sensorStatuses = sensorStatuses(from: state.snapshot)
+        diagnosticsScreen.runLogExport = runLogExport(from: state)
+    }
+
+    private func applyPersistedSetupPreferences() {
+        guard let preferences = setupPreferencesStore.loadSetupPreferences() else { return }
+
+        for index in setupScreen.permissions.indices {
+            let id = setupScreen.permissions[index].id
+            guard let willingness = preferences.permissionWillingnessByID[id] else { continue }
+            setupScreen.permissions[index].willingness = willingness
+        }
+
+        let validIntents = Set(setupScreen.questionnaire.availablePrimaryIntents)
+        let validUserTags = Set(setupScreen.questionnaire.availableUserTags)
+        setupScreen.questionnaire.isSkipped = preferences.questionnaire.isSkipped
+
+        if preferences.questionnaire.isSkipped {
+            setupScreen.questionnaire.primaryIntent = nil
+            setupScreen.questionnaire.additionalNeeds = []
+            setupScreen.questionnaire.userTag = UserTag.any.rawValue
+        } else {
+            if let primaryIntent = preferences.questionnaire.primaryIntent, validIntents.contains(primaryIntent) {
+                setupScreen.questionnaire.primaryIntent = primaryIntent
+            } else {
+                setupScreen.questionnaire.primaryIntent = nil
+            }
+            setupScreen.questionnaire.additionalNeeds = preferences.questionnaire.additionalNeeds.filter {
+                validIntents.contains($0)
+            }
+            setupScreen.questionnaire.userTag = validUserTags.contains(preferences.questionnaire.userTag)
+                ? preferences.questionnaire.userTag
+                : UserTag.any.rawValue
+        }
+    }
+
+    private func persistSetupPreferences() {
+        let permissionWillingnessByID = Dictionary(
+            uniqueKeysWithValues: setupScreen.permissions.map { ($0.id, $0.willingness) }
+        )
+        setupPreferencesStore.saveSetupPreferences(
+            SetupPreferences(
+                permissionWillingnessByID: permissionWillingnessByID,
+                questionnaire: SetupQuestionnairePreferences(
+                    isSkipped: setupScreen.questionnaire.isSkipped,
+                    primaryIntent: setupScreen.questionnaire.primaryIntent,
+                    additionalNeeds: setupScreen.questionnaire.additionalNeeds,
+                    userTag: setupScreen.questionnaire.userTag
+                )
+            )
+        )
+    }
+
+    private func sensorSnapshotRows(from snapshot: RawSensorSnapshot) -> [SensorSnapshotRowModel] {
+        [
+            SensorSnapshotRowModel(
+                id: "captured_time",
+                title: "Captured time",
+                value: Self.snapshotTimestamp(snapshot.capturedAt, timezoneID: snapshot.timezone),
+                detail: "Timezone \(snapshot.timezone); hour \(snapshot.hour); weekday \(Self.weekdayLabel(snapshot.weekday))"
+            ),
+            SensorSnapshotRowModel(
+                id: "acquisition_window",
+                title: "Acquisition window",
+                value: "\(Self.snapshotTimestamp(snapshot.startedAt, timezoneID: snapshot.timezone)) → \(Self.snapshotTimestamp(snapshot.frozenAt, timezoneID: snapshot.timezone))",
+                detail: "Deadline \(Self.snapshotTimestamp(snapshot.deadline, timezoneID: snapshot.timezone))"
+            ),
+            SensorSnapshotRowModel(
+                id: "network",
+                title: "Network",
+                value: snapshot.network,
+                detail: Self.detail(["status \(Self.availabilityLabel(for: .connectivity, in: snapshot))"])
+            ),
+            SensorSnapshotRowModel(
+                id: "audio_route",
+                title: "Audio route",
+                value: snapshot.bluetooth,
+                detail: Self.detail(["speaker/headphone-like output"])
+            ),
+            SensorSnapshotRowModel(
+                id: "place",
+                title: "Place",
+                value: snapshot.placeType,
+                detail: Self.detail([
+                    "available \(snapshot.placeTypeAvailable ? "yes" : "no")",
+                    "confidence \(Self.percent(snapshot.placeTypeConfidence))",
+                    "quality \(snapshot.placeTypeQuality)",
+                    Self.sensorFieldString(for: .location, key: "place_source", in: snapshot).map { "source \($0)" },
+                    Self.sensorFieldInt(for: .location, key: "poi_lookup_available", in: snapshot).map { "poi lookup \($0 > 0 ? "yes" : "no")" },
+                ])
+            ),
+            SensorSnapshotRowModel(
+                id: "location",
+                title: "Location",
+                value: Self.locationValue(from: snapshot),
+                detail: Self.detail([
+                    snapshot.locationAccuracyM.map { "accuracy \(Self.measurement($0, unit: "m"))" },
+                    "status \(Self.availabilityLabel(for: .location, in: snapshot))",
+                ])
+            ),
+            SensorSnapshotRowModel(
+                id: "activity",
+                title: "Activity",
+                value: snapshot.activityState,
+                detail: Self.detail([
+                    "available \(snapshot.activityStateAvailable ? "yes" : "no")",
+                    "motion status \(Self.availabilityLabel(for: .motion, in: snapshot))",
+                ])
+            ),
+            SensorSnapshotRowModel(
+                id: "health",
+                title: "Health",
+                value: Self.healthValue(from: snapshot),
+                detail: Self.detail([
+                    "heart rate available \(snapshot.heartRateAvailable ? "yes" : "no")",
+                    "health status \(Self.availabilityLabel(for: .health, in: snapshot))",
+                ])
+            ),
+            SensorSnapshotRowModel(
+                id: "noise",
+                title: "Ambient noise",
+                value: snapshot.noiseClass ?? "Not captured",
+                detail: Self.detail([
+                    "available \(snapshot.noiseAvailable ? "yes" : "no")",
+                    "microphone status \(Self.availabilityLabel(for: .microphone, in: snapshot))",
+                ])
+            ),
+            SensorSnapshotRowModel(
+                id: "calendar",
+                title: "Calendar cue",
+                value: snapshot.calendarKeyword ?? "Not captured",
+                detail: Self.detail([
+                    "available \(snapshot.calendarAvailable ? "yes" : "no")",
+                    "calendar status \(Self.availabilityLabel(for: .calendar, in: snapshot))",
+                ])
+            ),
+            SensorSnapshotRowModel(
+                id: "weather",
+                title: "Weather",
+                value: snapshot.weather ?? "Not captured",
+                detail: Self.detail(["status \(Self.availabilityLabel(for: .weather, in: snapshot))"])
+            ),
+            SensorSnapshotRowModel(
+                id: "app_event",
+                title: "App event",
+                value: snapshot.appEvent,
+                detail: "Local context label used for this run"
+            ),
         ]
     }
 
@@ -329,6 +627,99 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         }
     }
 
+    private func runLogExport(from state: RunState) -> RunLogExportModel? {
+        let payload = RunLogExportPayload(generatedAt: Date(), runState: state)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+
+        do {
+            let data = try encoder.encode(payload)
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RecoPOCLogs", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let fileURL = directory.appendingPathComponent(Self.runLogFileName(generatedAt: payload.generatedAt))
+            try data.write(to: fileURL, options: .atomic)
+            let providerCount = state.snapshot?.acquisitionTrace?.providers.count ?? 0
+            return RunLogExportModel(
+                fileURL: fileURL,
+                summary: "JSON includes snapshot, timing events, provider traces, and recommendation errors. Provider traces: \(providerCount)."
+            )
+        } catch {
+            return nil
+        }
+    }
+
+    private static func snapshotTimestamp(_ date: Date, timezoneID: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        formatter.timeZone = TimeZone(identifier: timezoneID) ?? .current
+        return formatter.string(from: date)
+    }
+
+    private static func runLogFileName(generatedAt: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return "reco-poc-run-log-\(formatter.string(from: generatedAt)).json"
+    }
+
+    private static func weekdayLabel(_ weekday: Int) -> String {
+        let labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        guard labels.indices.contains(weekday) else { return "\(weekday)" }
+        return labels[weekday]
+    }
+
+    private static func availabilityLabel(for sensor: RawSensorName, in snapshot: RawSensorSnapshot) -> String {
+        snapshot.statuses[sensor.rawValue]?.availability.rawValue ?? "unknown"
+    }
+
+    private static func sensorFieldString(for sensor: RawSensorName, key: String, in snapshot: RawSensorSnapshot) -> String? {
+        snapshot[sensor]?.reading?.values[key]?.stringValue
+    }
+
+    private static func sensorFieldInt(for sensor: RawSensorName, key: String, in snapshot: RawSensorSnapshot) -> Int? {
+        guard let value = snapshot[sensor]?.reading?.values[key] else { return nil }
+        if case .int(let intValue) = value { return intValue }
+        return nil
+    }
+
+    private static func locationValue(from snapshot: RawSensorSnapshot) -> String {
+        guard let latitude = snapshot.latitude, let longitude = snapshot.longitude else {
+            return "Not captured"
+        }
+        return "\(String(format: "%.5f", latitude)), \(String(format: "%.5f", longitude))"
+    }
+
+    private static func healthValue(from snapshot: RawSensorSnapshot) -> String {
+        var parts: [String] = []
+        if let heartRateZone = snapshot.heartRateZone {
+            parts.append("HR \(heartRateZone)")
+        }
+        if let stepsLast10Min = snapshot.stepsLast10Min {
+            parts.append("steps/10m \(stepsLast10Min)")
+        }
+        if let recentWorkoutMinutes24h = snapshot.recentWorkoutMinutes24h {
+            parts.append("workout/24h \(recentWorkoutMinutes24h)m")
+        }
+        if let sleepQuality = snapshot.sleepQuality {
+            parts.append("sleep \(sleepQuality)")
+        }
+        return parts.isEmpty ? "Not captured" : parts.joined(separator: " · ")
+    }
+
+    private static func percent(_ value: Double) -> String {
+        "\(Int((value * 100).rounded()))%"
+    }
+
+    private static func measurement(_ value: Double, unit: String) -> String {
+        "\(String(format: "%.0f", value))\(unit)"
+    }
+
+    private static func detail(_ values: [String?]) -> String? {
+        let detail = values.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "; ")
+        return detail.isEmpty ? nil : detail
+    }
+
     private static func durationLabel(for event: TimingEvent) -> String {
         guard let endedAt = event.endedAt else { return "in flight" }
         let milliseconds = Int(max(0, endedAt.timeIntervalSince(event.startedAt) * 1000))
@@ -343,6 +734,16 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         )
     }
 
+    private func readiness(from readiness: PermissionCapabilityReadiness) -> CapabilityReadiness {
+        switch readiness {
+        case .available: return .available
+        case .limited: return .limited
+        case .blocked: return .blocked
+        case .requiresHost: return .requiresHost
+        case .optional: return .optional
+        }
+    }
+
     private func initialNeed(from value: String?) -> InitialNeed? {
         guard let value else { return nil }
         return InitialNeed.allCases.first(where: { $0.rawValue == value })
@@ -352,11 +753,40 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         UserTag.allCases.first(where: { $0.rawValue == value })
     }
 
+
+    private func resetFeedbackSelections() {
+        resultsScreen.selectedScene = nil
+        resultsScreen.feedbackStatus = nil
+        resultsScreen.feedbackQuality = Self.defaultFeedbackQualitySelection()
+    }
+
+    private static func defaultFeedbackQualitySelection() -> FeedbackQualitySelectionModel {
+        FeedbackQualitySelectionModel(
+            dwellTimeSec: nil,
+            playedRatioPctOptions: [
+                .init(title: "Not set", value: nil),
+                .init(title: "25%", value: "0.25"),
+                .init(title: "50%", value: "0.5"),
+                .init(title: "75%", value: "0.75"),
+                .init(title: "100%", value: "1.0")
+            ],
+            selectedPlayedRatioPct: nil,
+            nextActionOptions: [
+                .init(title: "Not set", value: nil),
+                .init(title: "completed", value: "completed"),
+                .init(title: "replay", value: "replay"),
+                .init(title: "skip", value: "skip"),
+                .init(title: "exit", value: "exit")
+            ],
+            selectedNextAction: nil
+        )
+    }
+
     private static func makeHomeScreen() -> HomeRunScreenModel {
         HomeRunScreenModel(
             setupBanner: SetupBannerModel(
                 title: "Setup recommended before the first run",
-                detail: "Permission willingness and questionnaire can be edited later.",
+                detail: "Host/capability status, willingness, and questionnaire can be edited later.",
                 isReady: false
             ),
             primaryActionTitle: "Start Recommendation Run",
@@ -367,6 +797,8 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
                 .init(id: "recommend", title: "Recommend fan-out", detail: "Waiting", style: .idle),
                 .init(id: "feedback", title: "Feedback submission", detail: "Blocked until true scene selected", style: .idle)
             ],
+            sensorSnapshotSummary: "Start a recommendation run to see the sensor inputs used for that request.",
+            sensorSnapshotRows: [],
             latestResultsSummary: "Results will group by virtual user after the first run.",
             retryStatus: RetryStatusModel(queuedCount: 1, nextRetryLabel: "Retry in 00:27", lastError: "Latest feedback batch had one simulated timeout."),
             canOpenResults: true
@@ -417,6 +849,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             ],
             sceneOptions: sceneOptions,
             selectedScene: SceneCatalog.names.last(where: { $0 == "冥想" }),
+            feedbackQuality: defaultFeedbackQualitySelection(),
             feedbackStatus: RetryStatusModel(queuedCount: 1, nextRetryLabel: "Retry in 00:27", lastError: "One feedback item is queued after a simulated timeout.")
         )
     }
@@ -428,14 +861,14 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
                 .init(id: "network", title: "Network", status: "Success", durationLabel: "31 ms"),
                 .init(id: "location", title: "Location / Place", status: "Success", durationLabel: "6.2 s"),
                 .init(id: "motion", title: "Motion", status: "Success", durationLabel: "1.4 s"),
-                .init(id: "health", title: "Health", status: "Unavailable / placeholder", durationLabel: "15 s deadline"),
+                .init(id: "health", title: "Health", status: "Unavailable / placeholder", durationLabel: "60 s upper bound"),
                 .init(id: "noise", title: "Noise", status: "Skipped", durationLabel: "0 ms"),
                 .init(id: "calendar", title: "Calendar", status: "Denied", durationLabel: "0 ms")
             ],
             timingEvents: [
                 .init(id: "open", title: "App opened", timestampLabel: "09:40:00", detail: "Initial shell visible"),
                 .init(id: "setup", title: "Setup checked", timestampLabel: "09:40:02", detail: "Willingness and questionnaire loaded"),
-                .init(id: "acquire", title: "Acquisition started", timestampLabel: "09:40:12", detail: "15s total deadline"),
+                .init(id: "acquire", title: "Acquisition started", timestampLabel: "09:40:12", detail: "60s total upper bound"),
                 .init(id: "freeze", title: "Raw snapshot frozen", timestampLabel: "09:40:21", detail: "Completed at 9.6s"),
                 .init(id: "virtual", title: "Virtual contexts derived", timestampLabel: "09:40:21", detail: "Built-in registry + optional ad hoc user"),
                 .init(id: "recommend", title: "Recommend responses received", timestampLabel: "09:40:22", detail: "15 success / 1 failed / 1 queued"),
@@ -448,7 +881,8 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
                 "This shell intentionally keeps retry state in memory only.",
                 "True scene selection is sourced from the shared 18-scene domain catalog.",
                 "Replace demo state with Lane 4 coordinator and Lane 1 domain catalog once those modules land."
-            ]
+            ],
+            runLogExport: nil
         )
     }
 

@@ -25,3 +25,6 @@ backend/data/*scene_vectors*.npy
 # R local history
 .Rhistory
 backend/__pycache__/
+
+# Local frontend diagnostic exports
+frontend/logs/

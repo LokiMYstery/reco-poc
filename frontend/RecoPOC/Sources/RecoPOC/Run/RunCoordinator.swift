@@ -100,9 +100,13 @@ public actor RunCoordinator {
         return state
     }
 
-    public func submitFeedback(selectedScene: RecoScene, from state: RunState) async -> RunState {
+    public func submitFeedback(selectedScene: RecoScene, from state: RunState, quality: FeedbackQuality? = nil) async -> RunState {
         var next = state
         next.selectedTrueScene = selectedScene.name
+
+        let measuredQuality = measuredFeedbackQuality(from: state, overridingWith: quality)
+        next.feedbackQuality = measuredQuality?.isEmpty == false ? measuredQuality : nil
+
         next.timingEvents.append(
             TimingEvent(
                 phase: "true_scene_selected",
@@ -114,7 +118,7 @@ public actor RunCoordinator {
 
         let jobs = state.results.compactMap { result -> FeedbackRequest? in
             guard result.isSuccess else { return nil }
-            return payloadMapper.feedbackPayload(result: result, acceptedScene: selectedScene)
+            return payloadMapper.feedbackPayload(result: result, acceptedScene: selectedScene, quality: next.feedbackQuality)
         }
         next.feedbackJobs = jobs
 
@@ -180,6 +184,21 @@ public actor RunCoordinator {
             }
         }
         return feedbackQueue.allJobs
+    }
+
+    private func measuredFeedbackQuality(from state: RunState, overridingWith quality: FeedbackQuality?) -> FeedbackQuality? {
+        let dwellTimeSec = measuredDwellTimeSec(from: state)
+        let merged = FeedbackQuality(
+            dwellTimeSec: quality?.dwellTimeSec ?? dwellTimeSec,
+            playedRatioPct: quality?.playedRatioPct,
+            nextAction: quality?.nextAction
+        )
+        return merged.isEmpty ? nil : merged
+    }
+
+    private func measuredDwellTimeSec(from state: RunState) -> Int? {
+        guard let resultsEndedAt = state.timingEvents.last(where: { $0.phase == "results" })?.endedAt else { return nil }
+        return max(0, Int(Date().timeIntervalSince(resultsEndedAt)))
     }
 
     private func scheduleRetry(for job: FeedbackRetryJob) {

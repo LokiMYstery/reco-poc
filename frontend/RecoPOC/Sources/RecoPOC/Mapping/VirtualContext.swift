@@ -34,6 +34,7 @@ public struct VirtualContextDeriver: VirtualContextDeriving {
         applyHealth(snapshot, mask: virtualUser.mask.health, into: &fields)
         applyMicrophone(snapshot, mask: virtualUser.mask.microphone, into: &fields)
         applyCalendar(snapshot, mask: virtualUser.mask.calendar, into: &fields)
+        applyWeather(snapshot, into: &fields)
         applyQuestionnaire(questionnaire, mask: virtualUser.mask.questionnaire, into: &fields)
 
         return VirtualContext(virtualUser: virtualUser, fields: fields)
@@ -118,6 +119,11 @@ public struct VirtualContextDeriver: VirtualContextDeriving {
         case .none:
             fields["calendar_available"] = .int(0)
         }
+    }
+
+
+    private func applyWeather(_ snapshot: RawSensorSnapshot, into fields: inout [String: JSONValue]) {
+        if let weather = snapshot.weather { fields["weather"] = .string(weather) }
     }
 
     private func applyQuestionnaire(_ questionnaire: QuestionnaireState, mask: QuestionnaireMask, into fields: inout [String: JSONValue]) {

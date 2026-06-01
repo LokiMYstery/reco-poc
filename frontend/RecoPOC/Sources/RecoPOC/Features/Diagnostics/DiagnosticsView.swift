@@ -5,6 +5,21 @@ struct DiagnosticsView: View {
 
     var body: some View {
         List {
+            Section("Run log") {
+                if let export = model.runLogExport {
+                    ShareLink(item: export.fileURL) {
+                        Label("Export Run Log", systemImage: "square.and.arrow.up")
+                    }
+                    Text(export.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Run a recommendation to export sensor acquisition diagnostics.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Sensor groups") {
                 ForEach(model.sensorStatuses) { status in
                     HStack {

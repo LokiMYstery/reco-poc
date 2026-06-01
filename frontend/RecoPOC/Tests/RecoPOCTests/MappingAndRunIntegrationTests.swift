@@ -39,6 +39,43 @@ final class MappingAndRunIntegrationTests: XCTestCase {
         XCTAssertEqual(context.fields["location_accuracy_m"], .double(1000))
     }
 
+    func testPrivacyWeakSignalsUseKeywordWeatherAndOmitLightClass() {
+        let snapshot = RawSensorSnapshot(
+            capturedAt: Date(timeIntervalSince1970: 1_000),
+            timezone: "Asia/Shanghai",
+            hour: 10,
+            weekday: 2,
+            network: "wifi",
+            bluetooth: "耳机",
+            placeType: "任意",
+            placeTypeAvailable: false,
+            placeTypeConfidence: 0,
+            placeTypeQuality: "unavailable",
+            activityState: "任意",
+            activityStateAvailable: false,
+            heartRateAvailable: false,
+            noiseClass: "普通",
+            noiseAvailable: true,
+            calendarKeyword: "会议",
+            calendarAvailable: true,
+            weather: "多云"
+        )
+        let user = VirtualUserRegistry.defaultUsers(deviceUUID: "device-demo")
+            .first { $0.key == "u_full_permission" }!
+
+        let context = VirtualContextDeriver().derive(
+            snapshot: snapshot,
+            virtualUser: user,
+            questionnaire: .sample
+        )
+
+        XCTAssertEqual(context.fields["calendar_title"], .string("会议"))
+        XCTAssertNil(context.fields["calendar_keyword"])
+        XCTAssertEqual(context.fields["weather"], .string("多云"))
+        XCTAssertEqual(context.fields["noise_class"], .string("普通"))
+        XCTAssertNil(context.fields["light_class"])
+    }
+
     func testFeedbackPayloadUsesCorrectionTop1AcceptedSceneAndNoImpressionField() throws {
         let result = RecommendationResult(
             userID: "device-demo:u_full_permission",
@@ -58,6 +95,25 @@ final class MappingAndRunIntegrationTests: XCTestCase {
         XCTAssertNil(object["dwell_time_sec"])
         XCTAssertNil(object["played_ratio_pct"])
         XCTAssertNil(object["next_action"])
+    }
+
+    func testFeedbackPayloadIncludesOptionalQualityWhenPresent() throws {
+        let result = RecommendationResult(
+            userID: "device-demo:u_full_permission",
+            virtualUserKey: "u_full_permission",
+            requestID: "run-001:u_full_permission",
+            topScenes: ["专注", "阅读", "放松"],
+            latencyMs: 42
+        )
+        let quality = FeedbackQuality(dwellTimeSec: 19, playedRatioPct: 0.75, nextAction: "completed")
+        let payload = try XCTUnwrap(BackendPayloadMapper().feedbackPayload(result: result, acceptedScene: RecoScene(id: 6, name: "阅读"), quality: quality))
+        let data = try JSONEncoder().encode(payload)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(object["dwell_time_sec"] as? Int, 19)
+        XCTAssertEqual(object["played_ratio_pct"] as? Double, 0.75)
+        XCTAssertEqual(object["next_action"] as? String, "completed")
+        XCTAssertNil(object["impression"])
     }
 
     func testRunCoordinatorUsesOneSnapshotForManyUsersAndSkipsFeedbackForFailedRecommendations() async {
@@ -89,6 +145,9 @@ final class MappingAndRunIntegrationTests: XCTestCase {
         XCTAssertEqual(queuedCount, 2)
         XCTAssertTrue(feedbackState.feedbackJobs.allSatisfy { $0.eventType == "correction" })
         XCTAssertFalse(feedbackState.feedbackJobs.contains { $0.userID == "device-demo:\(failingKey)" })
+        XCTAssertNotNil(feedbackState.feedbackQuality?.dwellTimeSec)
+        XCTAssertNil(feedbackState.feedbackQuality?.playedRatioPct)
+        XCTAssertNil(feedbackState.feedbackQuality?.nextAction)
     }
 
     func testFreshFeedbackRetryQueueStartsEmptyAfterCoordinatorRecreation() async {
