@@ -524,6 +524,8 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
                     "available \(snapshot.placeTypeAvailable ? "yes" : "no")",
                     "confidence \(Self.percent(snapshot.placeTypeConfidence))",
                     "quality \(snapshot.placeTypeQuality)",
+                    Self.sensorFieldString(for: .location, key: "place_source", in: snapshot).map { "source \($0)" },
+                    Self.sensorFieldInt(for: .location, key: "poi_lookup_available", in: snapshot).map { "poi lookup \($0 > 0 ? "yes" : "no")" },
                 ])
             ),
             SensorSnapshotRowModel(
@@ -669,6 +671,16 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
 
     private static func availabilityLabel(for sensor: RawSensorName, in snapshot: RawSensorSnapshot) -> String {
         snapshot.statuses[sensor.rawValue]?.availability.rawValue ?? "unknown"
+    }
+
+    private static func sensorFieldString(for sensor: RawSensorName, key: String, in snapshot: RawSensorSnapshot) -> String? {
+        snapshot[sensor]?.reading?.values[key]?.stringValue
+    }
+
+    private static func sensorFieldInt(for sensor: RawSensorName, key: String, in snapshot: RawSensorSnapshot) -> Int? {
+        guard let value = snapshot[sensor]?.reading?.values[key] else { return nil }
+        if case .int(let intValue) = value { return intValue }
+        return nil
     }
 
     private static func locationValue(from snapshot: RawSensorSnapshot) -> String {

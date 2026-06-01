@@ -80,6 +80,46 @@ struct NativeSensorFailure: Error, Equatable, Sendable {
     var detail: String?
 }
 
+private func nativeNSErrorDiagnostics(prefix: String, error: Error) -> (reasonCode: String, detail: String) {
+    let nsError = error as NSError
+    let reasonCode = "\(prefix)_error:\(nativeReasonComponent(nsError.domain)):\(nsError.code)"
+    var detailParts = [
+        "type=\(String(describing: type(of: error)))",
+        "domain=\(nsError.domain)",
+        "code=\(nsError.code)",
+        "message=\(error.localizedDescription)"
+    ]
+
+    for key in nsError.userInfo.keys.sorted(by: { "\($0)" < "\($1)" }) {
+        guard key != NSLocalizedDescriptionKey else { continue }
+        let value = nsError.userInfo[key]!
+        if let underlying = value as? NSError {
+            detailParts.append("userInfo.\(key)=NSError(domain:\(underlying.domain),code:\(underlying.code),message:\(underlying.localizedDescription))")
+        } else {
+            detailParts.append("userInfo.\(key)=\(nativeDiagnosticValue(value))")
+        }
+    }
+
+    return (reasonCode, detailParts.joined(separator: ";"))
+}
+
+private func nativeReasonComponent(_ value: String) -> String {
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+    return String(
+        value.unicodeScalars.map { scalar in
+            allowed.contains(scalar) ? Character(scalar) : "_"
+        }
+    )
+}
+
+private func nativeDiagnosticValue(_ value: Any) -> String {
+    let raw = String(describing: value)
+        .replacingOccurrences(of: "\n", with: " ")
+        .replacingOccurrences(of: ";", with: ",")
+    if raw.count <= 240 { return raw }
+    return "\(raw.prefix(240))…"
+}
+
 #if canImport(CoreLocation)
 private enum NativeLocationConfig {
     static let oneShotTimeout: TimeInterval = 55
@@ -186,8 +226,8 @@ public struct SystemLocationSnapshotProvider: LocationSnapshotProviding, Locatio
 
         switch locationReport.outcome {
         case .success(let location):
-            let (place, placeStep) = await NativePlaceTypeMapper.derivePlaceWithTrace(for: location)
-            steps.append(placeStep)
+            let (place, placeSteps) = await NativePlaceTypeMapper.derivePlaceWithTrace(for: location)
+            steps.append(contentsOf: placeSteps)
             return RawSensorProviderReadOutcome(
                 result: .reading(
                     RawSensorReading(
@@ -200,10 +240,12 @@ public struct SystemLocationSnapshotProvider: LocationSnapshotProviding, Locatio
                             "place_type": .string(place.placeType),
                             "place_type_confidence": .double(place.confidence),
                             "place_type_quality": .string(place.quality),
+                            "place_source": .string(place.source),
+                            "poi_lookup_available": .int(place.poiLookupAvailable ? 1 : 0),
                         ]
                     )
                 ),
-                detail: "place_quality=\(place.quality)",
+                detail: "place_quality=\(place.quality);place_source=\(place.source);poi_lookup_available=\(place.poiLookupAvailable ? 1 : 0)",
                 steps: steps
             )
         case .failure(let failure):
@@ -727,29 +769,7 @@ public struct WeatherSensorProvider: RawSensorReadingProvider, RawSensorTracingP
     }
 
     private static func weatherErrorDiagnostics(for error: Error) -> (reasonCode: String, detail: String) {
-        let nsError = error as NSError
-        let reasonCode = "weatherkit_error:\(reasonComponent(nsError.domain)):\(nsError.code)"
-        var detailParts = [
-            "type=\(String(describing: type(of: error)))",
-            "domain=\(nsError.domain)",
-            "code=\(nsError.code)",
-            "message=\(error.localizedDescription)"
-        ]
-        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
-            detailParts.append("underlying_domain=\(underlying.domain)")
-            detailParts.append("underlying_code=\(underlying.code)")
-            detailParts.append("underlying_message=\(underlying.localizedDescription)")
-        }
-        return (reasonCode, detailParts.joined(separator: ";"))
-    }
-
-    private static func reasonComponent(_ value: String) -> String {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
-        return String(
-            value.unicodeScalars.map { scalar in
-                allowed.contains(scalar) ? Character(scalar) : "_"
-            }
-        )
+        nativeNSErrorDiagnostics(prefix: "weatherkit", error: error)
     }
 }
 
@@ -1108,143 +1128,686 @@ struct NativeDerivedPlace: Equatable, Sendable {
     var placeType: String
     var confidence: Double
     var quality: String
+    var source: String
+    var poiLookupAvailable: Bool
+}
+
+private struct NativePlaceProbeResult: Sendable {
+    var candidates: [NativePlaceCandidate]
+    var trace: SensorStepTrace
+}
+
+struct NativePlaceCandidate: Equatable, Sendable {
+    var placeType: String
+    var confidence: Double
+    var source: String
+    var query: String?
+    var itemName: String?
+    var categoryRaw: String?
+    var distanceM: Double
+    var rank: Int
+    var evidence: String
+    var dedupeKey: String
+}
+
+private struct NativePlaceDecision: Equatable, Sendable {
+    var place: NativeDerivedPlace
+    var runnerUp: NativePlaceCandidate?
+    var margin: Double
+    var candidateCount: Int
+    var reasonCode: String?
 }
 
 enum NativePlaceTypeMapper {
     fileprivate static func derivePlace(for location: LocationSample) async -> NativeDerivedPlace {
-        await derivePlaceWithTrace(for: location).0
+        await derivePlaceWithTrace(for: location).place
     }
 
-    fileprivate static func derivePlaceWithTrace(for location: LocationSample) async -> (NativeDerivedPlace, SensorStepTrace) {
-        let startedAt = Date()
+    fileprivate static func derivePlaceWithTrace(for location: LocationSample) async -> (place: NativeDerivedPlace, steps: [SensorStepTrace]) {
         #if canImport(MapKit)
         if #available(iOS 14.0, macOS 11.0, *) {
-            let request = MKLocalPointsOfInterestRequest(center: location.coordinate, radius: 200)
-            let result = await withCheckedContinuation { (continuation: CheckedContinuation<Result<NativeDerivedPlace, NativeSensorFailure>, Never>) in
-                MKLocalSearch(request: request).start { response, error in
-                    if let error {
-                        continuation.resume(
-                            returning: .failure(
-                                NativeSensorFailure(
-                                    reason: .missingSample,
-                                    reasonCode: "mapkit_error:\(String(describing: type(of: error)))",
-                                    detail: error.localizedDescription
-                                )
-                            )
-                        )
-                    } else if let response {
-                        let origin = location.clLocation
-                        if let nearest = response.mapItems
-                            .compactMap({ item -> (MKMapItem, CLLocationDistance)? in
-                                guard let itemLocation = item.placemark.location else { return nil }
-                                return (item, itemLocation.distance(from: origin))
-                            })
-                            .sorted(by: { $0.1 < $1.1 })
-                            .first
-                        {
-                            continuation.resume(returning: .success(map(category: nearest.0.pointOfInterestCategory, distance: nearest.1)))
-                        } else {
-                            continuation.resume(
-                                returning: .failure(
-                                    NativeSensorFailure(
-                                        reason: .missingSample,
-                                        reasonCode: "mapkit_no_poi",
-                                        detail: "MapKit returned no nearby POI; falling back to outdoor place type."
-                                    )
-                                )
-                            )
-                        }
-                    } else {
-                        continuation.resume(
-                            returning: .failure(
-                                NativeSensorFailure(
-                                    reason: .missingSample,
-                                    reasonCode: "mapkit_no_response",
-                                    detail: "MapKit returned no POI response."
-                                )
-                            )
-                        )
-                    }
-                }
-            }
-            let endedAt = Date()
-            switch result {
-            case .success(let place):
-                return (
-                    place,
-                    SensorStepTrace(
-                        name: "mapkit.poi_search",
-                        startedAt: startedAt,
-                        endedAt: endedAt,
-                        availability: .available,
-                        detail: "place_quality=\(place.quality)"
-                    )
-                )
-            case .failure(let failure):
-                let fallback = NativeDerivedPlace(placeType: "户外", confidence: 0.15, quality: "noisy_mapping")
-                return (
-                    fallback,
-                    SensorStepTrace(
-                        name: "mapkit.poi_search",
-                        startedAt: startedAt,
-                        endedAt: endedAt,
-                        availability: .unavailable,
-                        reasonCode: failure.reasonCode,
-                        detail: failure.detail
-                    )
-                )
-            }
+            async let reverseGeocodeProbe = reverseGeocodeProbe(for: location)
+            let queryProbes = await queryProbeBatch(for: location, radius: 500)
+            let probes = await [reverseGeocodeProbe] + queryProbes
+            let candidates = dedupeCandidates(probes.flatMap(\.candidates))
+            let decision = decide(candidates: candidates)
+            return (decision.place, probes.map(\.trace) + [decisionStep(for: decision)])
         }
         #endif
 
-        let fallback = NativeDerivedPlace(placeType: "户外", confidence: 0.15, quality: "noisy_mapping")
+        let fallback = fallbackPlace()
+        let now = Date()
         return (
             fallback,
-            SensorStepTrace(
-                name: "mapkit.poi_search",
-                startedAt: startedAt,
-                endedAt: Date(),
-                availability: .unavailable,
-                reasonCode: "mapkit_unsupported",
-                detail: "MapKit POI lookup is not available in this build."
-            )
+            [
+                SensorStepTrace(
+                    name: "place.ab_decision",
+                    startedAt: now,
+                    endedAt: now,
+                    availability: .unavailable,
+                    reasonCode: "mapkit_unsupported",
+                    detail: "MapKit POI lookup is not available in this build;chosen_source=\(fallback.source)"
+                )
+            ]
         )
     }
 
     #if canImport(MapKit)
-    static func map(category: MKPointOfInterestCategory?, distance: CLLocationDistance) -> NativeDerivedPlace {
-        guard let category else {
-            return NativeDerivedPlace(placeType: "户外", confidence: 0.15, quality: "noisy_mapping")
-        }
+    @MainActor
+    private static func queryProbeBatch(for location: LocationSample, radius: CLLocationDistance) async -> [NativePlaceProbeResult] {
+        async let restaurant = queryProbe(for: location, query: "餐厅", radius: radius)
+        async let coffee = queryProbe(for: location, query: "咖啡", radius: radius)
+        async let hotel = queryProbe(for: location, query: "酒店", radius: radius)
+        async let mall = queryProbe(for: location, query: "商场", radius: radius)
+        async let park = queryProbe(for: location, query: "公园", radius: radius)
+        async let library = queryProbe(for: location, query: "图书馆", radius: radius)
+        async let metro = queryProbe(for: location, query: "地铁站", radius: radius)
+        async let airport = queryProbe(for: location, query: "机场", radius: radius)
+        async let school = queryProbe(for: location, query: "学校", radius: radius)
+        async let institute = queryProbe(for: location, query: "研究院", radius: radius)
+        async let office = queryProbe(for: location, query: "写字楼", radius: radius)
+        return await [
+            restaurant,
+            coffee,
+            hotel,
+            mall,
+            park,
+            library,
+            metro,
+            airport,
+            school,
+            institute,
+            office
+        ].sorted { $0.trace.name < $1.trace.name }
+    }
 
-        let placeType: String
-        if category == .airport {
-            placeType = "机场"
-        } else if category == .hotel {
-            placeType = "酒店"
-        } else if category == .restaurant || category == .cafe || category == .bakery || category == .brewery || category == .foodMarket {
-            placeType = "餐厅"
-        } else if category == .park || category == .nationalPark {
-            placeType = "公园"
-        } else if category == .library {
-            placeType = "图书馆"
-        } else if category == .store {
-            placeType = "商场"
-        } else if category == .publicTransport {
-            placeType = "在途"
-        } else if category == .beach || category == .marina {
-            placeType = "海边"
-        } else if category == .school || category == .university {
-            placeType = "写字楼"
+    @MainActor
+    private static func queryProbe(for location: LocationSample, query: String, radius: CLLocationDistance) async -> NativePlaceProbeResult {
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = query
+        request.region = MKCoordinateRegion(
+            center: location.coordinate,
+            latitudinalMeters: radius * 2,
+            longitudinalMeters: radius * 2
+        )
+        request.resultTypes = .pointOfInterest
+        return await runMapKitSearch(
+            name: "mapkit.query_probe.\(query)",
+            search: MKLocalSearch(request: request),
+            location: location,
+            source: "mapkit_query_probe",
+            query: query,
+            requestDetail: "query=\(nativeDiagnosticValue(query));region_m=\(Int(radius * 2));result_types=point_of_interest;poi_filter=not_set"
+        )
+    }
+
+    @MainActor
+    private static func runMapKitSearch(
+        name: String,
+        search: MKLocalSearch,
+        location: LocationSample,
+        source: String,
+        query: String?,
+        requestDetail: String
+    ) async -> NativePlaceProbeResult {
+        let startedAt = Date()
+        let result = await withCheckedContinuation { (continuation: CheckedContinuation<Result<([NativePlaceCandidate], Int), NativeSensorFailure>, Never>) in
+            search.start { response, error in
+                if let error {
+                    let diagnostics = nativeNSErrorDiagnostics(prefix: "mapkit", error: error)
+                    continuation.resume(
+                        returning: .failure(
+                            NativeSensorFailure(
+                                reason: .missingSample,
+                                reasonCode: diagnostics.reasonCode,
+                                detail: "\(requestDetail);\(diagnostics.detail)"
+                            )
+                        )
+                    )
+                } else if let response {
+                    let candidates = candidates(
+                        from: response,
+                        origin: location.clLocation,
+                        source: source,
+                        query: query,
+                        locationAccuracyM: location.horizontalAccuracy
+                    )
+                    continuation.resume(returning: .success((candidates, response.mapItems.count)))
+                } else {
+                    continuation.resume(
+                        returning: .failure(
+                            NativeSensorFailure(
+                                reason: .missingSample,
+                                reasonCode: "mapkit_no_response",
+                                detail: "\(requestDetail);MapKit returned no POI response."
+                            )
+                        )
+                    )
+                }
+            }
+        }
+        let endedAt = Date()
+        switch result {
+        case .success(let success):
+            let detail = [
+                requestDetail,
+                "result_count=\(success.1)",
+                "usable_count=\(success.0.count)",
+                "top_candidates=\(candidateTraceSummary(success.0))"
+            ].joined(separator: ";")
+            return NativePlaceProbeResult(
+                candidates: success.0,
+                trace: SensorStepTrace(
+                    name: name,
+                    startedAt: startedAt,
+                    endedAt: endedAt,
+                    availability: success.0.isEmpty ? .unavailable : .available,
+                    reasonCode: success.0.isEmpty ? "mapkit_no_usable_poi" : nil,
+                    detail: detail
+                )
+            )
+        case .failure(let failure):
+            return NativePlaceProbeResult(
+                candidates: [],
+                trace: SensorStepTrace(
+                    name: name,
+                    startedAt: startedAt,
+                    endedAt: endedAt,
+                    availability: .unavailable,
+                    reasonCode: failure.reasonCode,
+                    detail: failure.detail
+                )
+            )
+        }
+    }
+
+    private static func candidates(
+        from response: MKLocalSearch.Response,
+        origin: CLLocation,
+        source: String,
+        query: String?,
+        locationAccuracyM: Double
+    ) -> [NativePlaceCandidate] {
+        response.mapItems.enumerated().compactMap { index, item in
+            guard let itemLocation = item.placemark.location else { return nil }
+            let distance = itemLocation.distance(from: origin)
+            guard distance <= 1_000 else { return nil }
+            return candidate(
+                category: item.pointOfInterestCategory,
+                query: query,
+                itemName: item.name,
+                placemarkTitle: placemarkTitle(for: item.placemark),
+                distance: distance,
+                rank: index,
+                source: source,
+                locationAccuracyM: locationAccuracyM,
+                latitude: itemLocation.coordinate.latitude,
+                longitude: itemLocation.coordinate.longitude
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.confidence == rhs.confidence { return lhs.distanceM < rhs.distanceM }
+            return lhs.confidence > rhs.confidence
+        }
+    }
+
+    static func map(category: MKPointOfInterestCategory?, distance: CLLocationDistance, source: String = "mapkit_query_probe") -> NativeDerivedPlace {
+        let candidate = candidate(
+            category: category,
+            query: nil,
+            itemName: nil,
+            placemarkTitle: nil,
+            distance: distance,
+            rank: 0,
+            source: source,
+            locationAccuracyM: 0,
+            latitude: nil,
+            longitude: nil
+        )
+        return NativeDerivedPlace(
+            placeType: candidate.placeType,
+            confidence: candidate.confidence,
+            quality: quality(for: candidate.confidence),
+            source: candidate.source,
+            poiLookupAvailable: true
+        )
+    }
+
+    static func testCandidate(
+        category: MKPointOfInterestCategory?,
+        query: String?,
+        itemName: String?,
+        distance: CLLocationDistance,
+        rank: Int = 0,
+        source: String = "mapkit_query_probe",
+        locationAccuracyM: Double = 0
+    ) -> NativePlaceCandidate {
+        candidate(
+            category: category,
+            query: query,
+            itemName: itemName,
+            placemarkTitle: nil,
+            distance: distance,
+            rank: rank,
+            source: source,
+            locationAccuracyM: locationAccuracyM,
+            latitude: nil,
+            longitude: nil
+        )
+    }
+
+    static func testDecision(candidates: [NativePlaceCandidate]) -> NativeDerivedPlace {
+        decide(candidates: candidates).place
+    }
+
+    private static func candidate(
+        category: MKPointOfInterestCategory?,
+        query: String?,
+        itemName: String?,
+        placemarkTitle: String?,
+        distance: CLLocationDistance,
+        rank: Int,
+        source: String,
+        locationAccuracyM: Double,
+        latitude: Double?,
+        longitude: Double?
+    ) -> NativePlaceCandidate {
+        let itemText = [itemName, placemarkTitle]
+            .compactMap { $0?.lowercased() }
+            .joined(separator: " ")
+        let categoryPlaceType = category.flatMap(placeType(for:))
+        let textPlaceType = placeType(forText: itemText)
+        let queryPlaceType = placeType(forQuery: query)
+        let placeType = categoryPlaceType ?? textPlaceType ?? queryPlaceType ?? "户外"
+        let hasCategoryEvidence = categoryPlaceType != nil && categoryPlaceType != "户外"
+        let hasTextEvidence = textPlaceType != nil && textPlaceType != "户外"
+        let hasQueryEvidence = queryPlaceType != nil && queryPlaceType != "户外"
+        let queryMatchesCategory = categoryPlaceType != nil && queryPlaceType != nil && categoryPlaceType == queryPlaceType
+        let queryConflictsWithCategory = categoryPlaceType != nil && queryPlaceType != nil && categoryPlaceType != queryPlaceType
+
+        var confidence = baseConfidence(forDistance: distance)
+        if hasCategoryEvidence { confidence += 0.12 }
+        if queryMatchesCategory { confidence += 0.08 }
+        if hasTextEvidence { confidence += 0.06 }
+        if rank == 0 { confidence += 0.04 } else if rank <= 2 { confidence += 0.02 }
+        if queryConflictsWithCategory { confidence -= 0.10 }
+        if locationAccuracyM > 100 { confidence -= 0.20 } else if locationAccuracyM > 50 { confidence -= 0.10 }
+
+        let cap: Double
+        if distance > 1_000 {
+            cap = 0
+        } else if hasCategoryEvidence {
+            cap = 0.85
+        } else if hasTextEvidence {
+            cap = 0.60
+        } else if hasQueryEvidence {
+            cap = 0.45
         } else {
-            placeType = "户外"
+            cap = 0.15
         }
+        confidence = min(max(confidence, 0), cap)
 
-        let confidence = distance <= 80 ? 0.75 : (distance <= 200 ? 0.45 : 0.25)
-        let quality = confidence >= 0.55 ? "exact_or_good_mapping" : "noisy_mapping"
-        return NativeDerivedPlace(placeType: placeType, confidence: confidence, quality: quality)
+        let roundedDistance = Int(distance.rounded())
+        let evidence = [
+            "query=\(nativeDiagnosticValue(query ?? "none"))",
+            "name=\(nativeDiagnosticValue(itemName ?? "none"))",
+            "category=\(nativeDiagnosticValue(categoryRawValue(category)))",
+            "distance_m=\(roundedDistance)",
+            "rank=\(rank)",
+            "category_match=\(queryMatchesCategory)",
+            "category_conflict=\(queryConflictsWithCategory)"
+        ].joined(separator: ",")
+        let dedupeKey = makeDedupeKey(itemName: itemName, latitude: latitude, longitude: longitude, placeType: placeType)
+        return NativePlaceCandidate(
+            placeType: placeType,
+            confidence: confidence,
+            source: source,
+            query: query,
+            itemName: itemName,
+            categoryRaw: categoryRawValue(category),
+            distanceM: distance,
+            rank: rank,
+            evidence: evidence,
+            dedupeKey: dedupeKey
+        )
+    }
+
+    private static func placeType(for category: MKPointOfInterestCategory) -> String? {
+        if category == .airport {
+            return "机场"
+        } else if category == .hotel {
+            return "酒店"
+        } else if category == .restaurant || category == .cafe || category == .bakery || category == .brewery || category == .foodMarket {
+            return "餐厅"
+        } else if category == .park || category == .nationalPark {
+            return "公园"
+        } else if category == .library {
+            return "图书馆"
+        } else if category == .store {
+            return "商场"
+        } else if category == .publicTransport {
+            return "在途"
+        } else if category == .beach || category == .marina {
+            return "海边"
+        } else if category == .school || category == .university {
+            return "写字楼"
+        }
+        return nil
     }
     #endif
+
+    private static func placeType(forQuery query: String?) -> String? {
+        guard let query else { return nil }
+        return placeType(forText: query)
+    }
+
+    private static func placeType(forText text: String) -> String? {
+        let haystack = text.lowercased()
+        if containsAny(haystack, ["机场", "airport"]) { return "机场" }
+        if containsAny(haystack, ["酒店", "宾馆", "hotel"]) { return "酒店" }
+        if containsAny(haystack, ["餐厅", "咖啡", "食堂", "饭店", "restaurant", "cafe"]) { return "餐厅" }
+        if containsAny(haystack, ["公园", "park"]) { return "公园" }
+        if containsAny(haystack, ["图书馆", "library"]) { return "图书馆" }
+        if containsAny(haystack, ["商场", "商城", "广场", "购物", "mall", "store"]) { return "商场" }
+        if containsAny(haystack, ["地铁", "车站", "火车站", "公交", "station", "transit"]) { return "在途" }
+        if containsAny(haystack, ["海边", "码头", "beach", "marina"]) { return "海边" }
+        if containsAny(haystack, ["学校", "大学", "学院", "研究院", "科技园", "园区", "大厦", "中心", "公司", "办公", "写字楼", "school", "university", "office"]) { return "写字楼" }
+        return nil
+    }
+
+    private static func containsAny(_ text: String, _ needles: [String]) -> Bool {
+        needles.contains { text.contains($0.lowercased()) }
+    }
+
+    private static func baseConfidence(forDistance distance: Double) -> Double {
+        if distance <= 50 { return 0.62 }
+        if distance <= 100 { return 0.55 }
+        if distance <= 200 { return 0.45 }
+        if distance <= 500 { return 0.32 }
+        if distance <= 1_000 { return 0.22 }
+        return 0
+    }
+
+    private static func quality(for confidence: Double) -> String {
+        confidence >= 0.65 ? "exact_or_good_mapping" : "noisy_mapping"
+    }
+
+    private static func decide(candidates rawCandidates: [NativePlaceCandidate]) -> NativePlaceDecision {
+        let candidates = dedupeCandidates(rawCandidates).filter { $0.placeType != "户外" && $0.confidence > 0 }
+        guard !candidates.isEmpty else {
+            return NativePlaceDecision(
+                place: fallbackPlace(),
+                runnerUp: nil,
+                margin: 0,
+                candidateCount: 0,
+                reasonCode: "place_fallback_outdoor"
+            )
+        }
+
+        let groups = Dictionary(grouping: candidates, by: \.placeType)
+        let scored = groups.map { placeType, grouped -> NativePlaceCandidate in
+            let sorted = grouped.sorted { lhs, rhs in
+                if lhs.confidence == rhs.confidence { return lhs.distanceM < rhs.distanceM }
+                return lhs.confidence > rhs.confidence
+            }
+            let top = sorted[0]
+            let second = sorted.dropFirst().first?.confidence ?? 0
+            let third = sorted.dropFirst(2).first?.confidence ?? 0
+            let aggregate = min(0.85, top.confidence + 0.08 * second + 0.04 * third)
+            return NativePlaceCandidate(
+                placeType: placeType,
+                confidence: aggregate,
+                source: top.source,
+                query: top.query,
+                itemName: top.itemName,
+                categoryRaw: top.categoryRaw,
+                distanceM: top.distanceM,
+                rank: top.rank,
+                evidence: "aggregate_count=\(sorted.count);top=[\(top.evidence)]",
+                dedupeKey: top.dedupeKey
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.confidence == rhs.confidence { return lhs.distanceM < rhs.distanceM }
+            return lhs.confidence > rhs.confidence
+        }
+
+        guard let winner = scored.first else {
+            return NativePlaceDecision(
+                place: fallbackPlace(),
+                runnerUp: nil,
+                margin: 0,
+                candidateCount: candidates.count,
+                reasonCode: "place_fallback_outdoor"
+            )
+        }
+
+        let runnerUp = scored.dropFirst().first
+        let margin = winner.confidence - (runnerUp?.confidence ?? 0)
+        var finalConfidence = winner.confidence
+        let hasCloseRunnerUp = runnerUp.map { $0.confidence >= 0.35 && margin < 0.12 } ?? false
+        if hasCloseRunnerUp {
+            finalConfidence = max(0, finalConfidence - 0.10)
+        }
+
+        if margin < 0.05 && finalConfidence < 0.40 {
+            return NativePlaceDecision(
+                place: fallbackPlace(),
+                runnerUp: runnerUp,
+                margin: margin,
+                candidateCount: candidates.count,
+                reasonCode: "place_ambiguous_low_confidence"
+            )
+        }
+
+        guard finalConfidence >= 0.40 else {
+            return NativePlaceDecision(
+                place: fallbackPlace(),
+                runnerUp: runnerUp,
+                margin: margin,
+                candidateCount: candidates.count,
+                reasonCode: "place_low_confidence"
+            )
+        }
+
+        let source = winner.source == "mapkit_query_probe" && winner.query != nil
+            ? "mapkit_query_probe:\(winner.query!)"
+            : winner.source
+        let place = NativeDerivedPlace(
+            placeType: winner.placeType,
+            confidence: finalConfidence,
+            quality: hasCloseRunnerUp ? "noisy_mapping" : quality(for: finalConfidence),
+            source: source,
+            poiLookupAvailable: true
+        )
+        return NativePlaceDecision(
+            place: place,
+            runnerUp: runnerUp,
+            margin: margin,
+            candidateCount: candidates.count,
+            reasonCode: nil
+        )
+    }
+
+    private static func dedupeCandidates(_ candidates: [NativePlaceCandidate]) -> [NativePlaceCandidate] {
+        var bestByKey: [String: NativePlaceCandidate] = [:]
+        for candidate in candidates {
+            if let current = bestByKey[candidate.dedupeKey] {
+                if candidate.confidence > current.confidence || (candidate.confidence == current.confidence && candidate.distanceM < current.distanceM) {
+                    bestByKey[candidate.dedupeKey] = candidate
+                }
+            } else {
+                bestByKey[candidate.dedupeKey] = candidate
+            }
+        }
+        return bestByKey.values.sorted { lhs, rhs in
+            if lhs.confidence == rhs.confidence { return lhs.distanceM < rhs.distanceM }
+            return lhs.confidence > rhs.confidence
+        }
+    }
+
+    private static func makeDedupeKey(itemName: String?, latitude: Double?, longitude: Double?, placeType: String) -> String {
+        let normalizedName = (itemName ?? "unknown")
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let latitude, let longitude {
+            return "\(normalizedName):\((latitude * 10_000).rounded() / 10_000):\((longitude * 10_000).rounded() / 10_000)"
+        }
+        return "\(normalizedName):\(placeType)"
+    }
+
+    private static func candidateTraceSummary(_ candidates: [NativePlaceCandidate]) -> String {
+        let summary = candidates.prefix(3).map { candidate in
+            [
+                candidate.placeType,
+                String(format: "%.2f", candidate.confidence),
+                "d=\(Int(candidate.distanceM.rounded()))",
+                "q=\(candidate.query ?? "none")",
+                "name=\(nativeDiagnosticValue(candidate.itemName ?? "none"))",
+                "cat=\(nativeDiagnosticValue(candidate.categoryRaw ?? "none"))"
+            ].joined(separator: ",")
+        }.joined(separator: "|")
+        return summary.isEmpty ? "none" : summary
+    }
+
+    #if canImport(MapKit)
+    private static func placemarkTitle(for placemark: MKPlacemark) -> String? {
+        [placemark.name, placemark.title, placemark.thoroughfare, placemark.subThoroughfare, placemark.locality, placemark.subLocality]
+            .compactMap { $0 }
+            .joined(separator: " ")
+    }
+
+    private static func categoryRawValue(_ category: MKPointOfInterestCategory?) -> String {
+        guard let category else { return "none" }
+        return category.rawValue
+    }
+    #endif
+
+    #if canImport(CoreLocation)
+    private static func reverseGeocodeProbe(for location: LocationSample) async -> NativePlaceProbeResult {
+        let startedAt = Date()
+        let result = await withCheckedContinuation { (continuation: CheckedContinuation<Result<String, NativeSensorFailure>, Never>) in
+            CLGeocoder().reverseGeocodeLocation(location.clLocation) { placemarks, error in
+                if let error {
+                    let diagnostics = nativeNSErrorDiagnostics(prefix: "clgeocoder", error: error)
+                    continuation.resume(
+                        returning: .failure(
+                            NativeSensorFailure(
+                                reason: .missingSample,
+                                reasonCode: diagnostics.reasonCode,
+                                detail: diagnostics.detail
+                            )
+                        )
+                    )
+                } else if let placemark = placemarks?.first {
+                    continuation.resume(returning: .success(reverseGeocodeSummary(for: placemark, count: placemarks?.count ?? 0)))
+                } else {
+                    continuation.resume(
+                        returning: .failure(
+                            NativeSensorFailure(
+                                reason: .missingSample,
+                                reasonCode: "clgeocoder_no_response",
+                                detail: "CoreLocation reverse geocoder returned no placemark."
+                            )
+                        )
+                    )
+                }
+            }
+        }
+        let endedAt = Date()
+        switch result {
+        case .success(let detail):
+            return NativePlaceProbeResult(
+                candidates: [],
+                trace: SensorStepTrace(
+                    name: "clgeocoder.reverse_geocode",
+                    startedAt: startedAt,
+                    endedAt: endedAt,
+                    availability: .available,
+                    detail: detail
+                )
+            )
+        case .failure(let failure):
+            return NativePlaceProbeResult(
+                candidates: [],
+                trace: SensorStepTrace(
+                    name: "clgeocoder.reverse_geocode",
+                    startedAt: startedAt,
+                    endedAt: endedAt,
+                    availability: .unavailable,
+                    reasonCode: failure.reasonCode,
+                    detail: failure.detail
+                )
+            )
+        }
+    }
+
+    private static func reverseGeocodeSummary(for placemark: CLPlacemark, count: Int) -> String {
+        var parts = ["placemark_count=\(count)"]
+        if let name = placemark.name, !name.isEmpty { parts.append("name=\(nativeDiagnosticValue(name))") }
+        if let locality = placemark.locality, !locality.isEmpty { parts.append("locality=\(nativeDiagnosticValue(locality))") }
+        if let subLocality = placemark.subLocality, !subLocality.isEmpty { parts.append("subLocality=\(nativeDiagnosticValue(subLocality))") }
+        if let inlandWater = placemark.inlandWater, !inlandWater.isEmpty { parts.append("inlandWater=\(nativeDiagnosticValue(inlandWater))") }
+        if let ocean = placemark.ocean, !ocean.isEmpty { parts.append("ocean=\(nativeDiagnosticValue(ocean))") }
+        if let areas = placemark.areasOfInterest, !areas.isEmpty {
+            parts.append("areasOfInterest=\(areas.prefix(5).map(nativeDiagnosticValue).joined(separator: ","))")
+        }
+        return parts.joined(separator: ";")
+    }
+    #else
+    private static func reverseGeocodeProbe(for location: LocationSample) async -> NativePlaceProbeResult {
+        let now = Date()
+        return NativePlaceProbeResult(
+            candidates: [],
+            trace: SensorStepTrace(
+                name: "clgeocoder.reverse_geocode",
+                startedAt: now,
+                endedAt: now,
+                availability: .unavailable,
+                reasonCode: "clgeocoder_unsupported",
+                detail: "CoreLocation reverse geocoder is unavailable in this build."
+            )
+        )
+    }
+    #endif
+
+    private static func fallbackPlace() -> NativeDerivedPlace {
+        NativeDerivedPlace(
+            placeType: "户外",
+            confidence: 0.15,
+            quality: "noisy_mapping",
+            source: "fallback_outdoor",
+            poiLookupAvailable: false
+        )
+    }
+
+    private static func decisionStep(for decision: NativePlaceDecision) -> SensorStepTrace {
+        let place = decision.place
+        let now = Date()
+        let runnerUpDetail: String
+        if let runnerUp = decision.runnerUp {
+            runnerUpDetail = "runner_up=\(runnerUp.placeType),\(String(format: "%.2f", runnerUp.confidence)),source=\(runnerUp.source)"
+        } else {
+            runnerUpDetail = "runner_up=none"
+        }
+        return SensorStepTrace(
+            name: "place.query_probe_decision",
+            startedAt: now,
+            endedAt: now,
+            availability: place.poiLookupAvailable ? .available : .unavailable,
+            reasonCode: decision.reasonCode,
+            detail: [
+                "chosen_source=\(place.source)",
+                "place_type=\(place.placeType)",
+                "confidence=\(String(format: "%.2f", place.confidence))",
+                "place_quality=\(place.quality)",
+                "poi_lookup_available=\(place.poiLookupAvailable ? 1 : 0)",
+                "candidate_count=\(decision.candidateCount)",
+                "margin=\(String(format: "%.2f", decision.margin))",
+                runnerUpDetail
+            ].joined(separator: ";")
+        )
+    }
 }
 #endif
 

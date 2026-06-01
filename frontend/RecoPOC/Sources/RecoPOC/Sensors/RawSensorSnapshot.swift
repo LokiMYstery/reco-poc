@@ -299,6 +299,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
         let placeType = Self.stringValue(for: .location, key: "place_type", in: fieldMap) ?? "任意"
         let placeTypeConfidence = Self.doubleValue(for: .location, key: "place_type_confidence", in: fieldMap) ?? 0
         let placeTypeQuality = Self.stringValue(for: .location, key: "place_type_quality", in: fieldMap) ?? Self.defaultQuality(for: fieldMap[.location]?.state)
+        let poiLookupAvailable = Self.intValue(for: .location, key: "poi_lookup_available", in: fieldMap)
         let latitude = Self.doubleValue(for: .location, key: "latitude", in: fieldMap) ?? Self.doubleValue(for: .location, key: "lat", in: fieldMap)
         let longitude = Self.doubleValue(for: .location, key: "longitude", in: fieldMap) ?? Self.doubleValue(for: .location, key: "lon", in: fieldMap)
         let locationAccuracyM = Self.doubleValue(for: .location, key: "location_accuracy_m", in: fieldMap)
@@ -330,7 +331,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
             network: network,
             bluetooth: bluetooth,
             placeType: placeType,
-            placeTypeAvailable: Self.isCaptured(fieldMap[.location]) && placeType != "任意",
+            placeTypeAvailable: Self.isCaptured(fieldMap[.location]) && placeType != "任意" && (poiLookupAvailable.map { $0 > 0 } ?? true),
             placeTypeConfidence: placeTypeConfidence,
             placeTypeQuality: placeTypeQuality,
             latitude: latitude,

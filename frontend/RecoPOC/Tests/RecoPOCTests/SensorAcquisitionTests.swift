@@ -191,8 +191,123 @@ struct SensorAcquisitionTests {
         #expect(NativePlaceTypeMapper.map(category: .restaurant, distance: 40).placeType == "餐厅")
         #expect(NativePlaceTypeMapper.map(category: .park, distance: 40).placeType == "公园")
         #expect(NativePlaceTypeMapper.map(category: .store, distance: 120).quality == "noisy_mapping")
+        #expect(NativePlaceTypeMapper.map(category: .store, distance: 40).source == "mapkit_query_probe")
+        #expect(NativePlaceTypeMapper.map(category: .store, distance: 40).poiLookupAvailable == true)
+    }
+
+
+    @Test("query place candidates infer low-confidence office labels from mainland AOI text")
+    func queryPlaceCandidateTextMapping() async throws {
+        let candidate = NativePlaceTypeMapper.testCandidate(
+            category: nil,
+            query: "研究院",
+            itemName: "中国科学院上海高等研究院",
+            distance: 40
+        )
+        let place = NativePlaceTypeMapper.testDecision(candidates: [candidate])
+
+        #expect(candidate.placeType == "写字楼")
+        #expect(candidate.confidence == 0.60)
+        #expect(place.placeType == "写字楼")
+        #expect(place.poiLookupAvailable == true)
+        #expect(place.quality == "noisy_mapping")
+        #expect(place.source == "mapkit_query_probe:研究院")
+    }
+
+    @Test("query place candidates prefer category over conflicting query text")
+    func queryPlaceCandidateCategoryBeatsConflictingQuery() async throws {
+        let candidate = NativePlaceTypeMapper.testCandidate(
+            category: .restaurant,
+            query: "酒店",
+            itemName: "测试酒店",
+            distance: 40
+        )
+
+        #expect(candidate.placeType == "餐厅")
+        #expect(candidate.confidence < NativePlaceTypeMapper.testCandidate(category: .restaurant, query: "餐厅", itemName: "测试餐厅", distance: 40).confidence)
+    }
+
+    @Test("query place decision ignores very distant candidates")
+    func queryPlaceDecisionIgnoresDistantCandidates() async throws {
+        let place = NativePlaceTypeMapper.testDecision(candidates: [
+            NativePlaceTypeMapper.testCandidate(
+                category: nil,
+                query: "酒店",
+                itemName: "远处酒店",
+                distance: 1_200
+            )
+        ])
+
+        #expect(place.placeType == "户外")
+        #expect(place.poiLookupAvailable == false)
+    }
+
+    @Test("query place decision aggregates multiple same-type candidates")
+    func queryPlaceDecisionAggregatesSameTypeCandidates() async throws {
+        let place = NativePlaceTypeMapper.testDecision(candidates: [
+            NativePlaceTypeMapper.testCandidate(category: .restaurant, query: "餐厅", itemName: "餐厅 A", distance: 40, rank: 0),
+            NativePlaceTypeMapper.testCandidate(category: .restaurant, query: "餐厅", itemName: "餐厅 B", distance: 50, rank: 1),
+            NativePlaceTypeMapper.testCandidate(category: .hotel, query: "酒店", itemName: "酒店 A", distance: 500, rank: 0),
+        ])
+
+        #expect(place.placeType == "餐厅")
+        #expect(place.confidence > 0.80)
+        #expect(place.poiLookupAvailable == true)
+    }
+
+    @Test("query place decision downgrades close runner-up conflicts")
+    func queryPlaceDecisionDowngradesCloseRunnerUp() async throws {
+        let place = NativePlaceTypeMapper.testDecision(candidates: [
+            NativePlaceTypeMapper.testCandidate(category: .restaurant, query: "餐厅", itemName: "餐厅 A", distance: 40),
+            NativePlaceTypeMapper.testCandidate(category: .hotel, query: "酒店", itemName: "酒店 A", distance: 40),
+        ])
+
+        #expect(place.poiLookupAvailable == true)
+        #expect(place.quality == "noisy_mapping")
+        #expect(place.confidence <= 0.75)
+    }
+
+    @Test("query place decision falls back when low-confidence classes are ambiguous")
+    func queryPlaceDecisionFallsBackWhenAmbiguousAndWeak() async throws {
+        let place = NativePlaceTypeMapper.testDecision(candidates: [
+            NativePlaceTypeMapper.testCandidate(category: nil, query: "餐厅", itemName: nil, distance: 500),
+            NativePlaceTypeMapper.testCandidate(category: nil, query: "酒店", itemName: nil, distance: 500),
+        ])
+
+        #expect(place.placeType == "户外")
+        #expect(place.poiLookupAvailable == false)
     }
     #endif
+
+    @Test("fallback place labels are not treated as captured POI lookups")
+    func fallbackPlaceLabelDoesNotPretendPOIWasCaptured() async throws {
+        let start = Date(timeIntervalSince1970: 7_500)
+        let snapshot = RawSensorSnapshot(
+            startedAt: start,
+            frozenAt: start.addingTimeInterval(1),
+            deadline: start.addingTimeInterval(60),
+            fields: [
+                RawSensorField(
+                    name: .location,
+                    state: .captured,
+                    reading: RawSensorReading(
+                        observedAt: start,
+                        values: [
+                            "place_type": .string("户外"),
+                            "place_type_confidence": .double(0.15),
+                            "place_type_quality": .string("noisy_mapping"),
+                            "place_source": .string("fallback_outdoor"),
+                            "poi_lookup_available": .int(0),
+                        ]
+                    )
+                )
+            ]
+        )
+
+        #expect(snapshot.placeType == "户外")
+        #expect(snapshot.placeTypeAvailable == false)
+        #expect(snapshot.statuses[RawSensorName.location.rawValue]?.availability == .available)
+    }
 
     @Test("native weak-signal mappers keep backend vocabulary stable")
     func nativeWeakSignalMappers() async throws {
