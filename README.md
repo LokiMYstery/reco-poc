@@ -40,6 +40,16 @@ docker compose up -d --build
 curl http://127.0.0.1:8000/health
 ```
 
+
+## iOS frontend install
+
+```bash
+git pull origin main
+open frontend/RecoPOC/RecoPOC.xcodeproj
+```
+
+In Xcode, select the `RecoPOCHost` scheme, choose a physical iPhone, confirm the signing team under **Signing & Capabilities**, then press **Run**. The committed backend URL defaults to `https://www.zkjpoc.icu`; override `RECO_BACKEND_BASE_URL` only when targeting a local or staging backend. Real sensor capture should be validated on a physical device, not the simulator.
+
 ## Frontend contract
 
 See `docs/frontend-backend-payload-contract.md`.
