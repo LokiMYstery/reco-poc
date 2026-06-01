@@ -9,7 +9,6 @@ protocol RecoPOCAppModeling: ObservableObject {
     var resultsScreen: ResultsScreenModel { get }
     var diagnosticsScreen: DiagnosticsScreenModel { get }
 
-    func skipSetup()
     func requestPermissionMaintenance(for groupID: String)
     func updateWillingness(for groupID: String, to option: PermissionWillingnessOption)
     func setQuestionnaireSkipped(_ isSkipped: Bool)
@@ -145,13 +144,6 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         applyPersistedSetupPreferences()
         refreshPermissionCapabilityStatuses()
         syncDerivedState()
-    }
-
-    func skipSetup() {
-        setupScreen.banner.isReady = true
-        setupScreen.banner.title = "Setup skipped"
-        setupScreen.banner.detail = "You can revisit permissions and questionnaire anytime before the next run."
-        refreshHomeBanner()
     }
 
     func requestPermissionMaintenance(for groupID: String) {

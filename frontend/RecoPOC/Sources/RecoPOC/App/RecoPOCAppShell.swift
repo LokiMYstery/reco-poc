@@ -26,7 +26,6 @@ struct RecoPOCAppShell<Model: RecoPOCAppModeling>: View {
             NavigationStack {
                 SetupView(
                     model: model.setupScreen,
-                    onSkip: model.skipSetup,
                     onRequestPermissionMaintenance: model.requestPermissionMaintenance(for:),
                     onChangeWillingness: model.updateWillingness(for:to:),
                     onSetQuestionnaireSkipped: model.setQuestionnaireSkipped,

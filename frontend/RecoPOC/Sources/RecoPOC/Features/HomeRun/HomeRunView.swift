@@ -29,7 +29,7 @@ struct HomeRunView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     HStack(spacing: 12) {
-                        Button("Maintain Setup", action: onOpenSetup)
+                        Button("Setup", action: onOpenSetup)
                             .buttonStyle(.bordered)
                         Button(model.primaryActionTitle, action: onStartRun)
                             .buttonStyle(.borderedProminent)
@@ -84,7 +84,7 @@ struct HomeRunView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(!model.canSubmitFeedback)
             } header: {
-                Text("True Scene Selector")
+                Text("True Scene Selector (select at least 1, up to 3)")
             } footer: {
                 Text("Choose up to 3 scenes you truly want. Each selected scene sends one correction feedback item for the full-access result.")
             }

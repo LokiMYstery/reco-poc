@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SetupView: View {
   let model: SetupScreenModel
-  let onSkip: () -> Void
   let onRequestPermissionMaintenance: (String) -> Void
   let onChangeWillingness: (String, PermissionWillingnessOption) -> Void
   let onSetQuestionnaireSkipped: (Bool) -> Void
@@ -12,24 +11,6 @@ struct SetupView: View {
 
   var body: some View {
     Form {
-      Section {
-        VStack(alignment: .leading, spacing: 8) {
-          HStack {
-            Text(model.banner.title)
-              .font(.headline)
-            Spacer()
-            StatusBadge(
-              text: model.banner.isReady ? "Ready" : "Optional",
-              tint: model.banner.isReady ? .green : .orange)
-          }
-          Text(model.banner.detail)
-            .foregroundStyle(.secondary)
-          Button("Skip Setup", action: onSkip)
-        }
-      } header: {
-        Text("Experiment Setup")
-      }
-
       Section {
         VStack(alignment: .leading, spacing: 8) {
           HStack(alignment: .top) {
