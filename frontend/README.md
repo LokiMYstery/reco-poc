@@ -43,7 +43,7 @@ Use `xcodebuild -project RecoPOC.xcodeproj -scheme RecoPOCHost -showdestinations
 
 ### Backend URL
 
-The host reads `RecoBackendBaseURL` from `Info.plist`, backed by the Xcode build setting `RECO_BACKEND_BASE_URL`. The committed Debug value currently points at `http://66.245.216.223:8000`; if the build setting is emptied, the app falls back to `http://127.0.0.1:8000`.
+The host reads `RecoBackendBaseURL` from `Info.plist`, backed by the Xcode build setting `RECO_BACKEND_BASE_URL`. The committed Debug value currently points at `https://www.zkjpoc.icu`; if the build setting is emptied, the app falls back to `http://127.0.0.1:8000`.
 
 Example override:
 
@@ -58,17 +58,17 @@ xcodebuild -project RecoPOC.xcodeproj \
   build
 ```
 
-The temporary PoC backend is currently configured as `http://66.245.216.223:8000`. When a DNS/HTTPS endpoint is available, update `RECO_BACKEND_BASE_URL` and remove the temporary IP ATS exception.
+The PoC backend is currently configured as `https://www.zkjpoc.icu`. If you need to target a local or staging backend, override `RECO_BACKEND_BASE_URL` at build time.
 
 ### ATS / HTTP backend note
 
-`Info.plist` currently enables local HTTP development through `NSAllowsLocalNetworking`, adds a narrow HTTP exception for `66.245.216.223`, and does not enable broad arbitrary loads. Once the backend host is finalized:
+`Info.plist` currently enables local HTTP development through `NSAllowsLocalNetworking` and does not enable broad arbitrary loads. The production backend uses HTTPS and needs no ATS exception.
 
 - HTTPS domain: no ATS exception should be needed.
 - HTTP DNS name: add a narrow exception keyed by the DNS host only.
 - HTTP IP literal: add a narrow exception keyed by the IP only.
 
-The ATS key must not include scheme or port. For example, use `66.245.216.223`, not `http://66.245.216.223:8000`.
+The ATS key must not include scheme or port. For example, use `api.example.com`, not `https://api.example.com:8000`.
 
 ### Device signing
 

@@ -33,7 +33,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: RecoPOCHost.entitlements
         DEVELOPMENT_TEAM: BYRP6L2B45
-        RECO_BACKEND_BASE_URL: "http://66.245.216.223:8000"
+        RECO_BACKEND_BASE_URL: "https://www.zkjpoc.icu"
 schemes:
   RecoPOCHost:
     build:

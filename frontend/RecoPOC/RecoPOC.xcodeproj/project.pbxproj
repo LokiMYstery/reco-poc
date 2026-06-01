@@ -176,7 +176,7 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.recopoc.host;
-				RECO_BACKEND_BASE_URL = "http://66.245.216.223:8000";
+				RECO_BACKEND_BASE_URL = "https://www.zkjpoc.icu";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -198,7 +198,7 @@
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.recopoc.host;
-				RECO_BACKEND_BASE_URL = "http://66.245.216.223:8000";
+				RECO_BACKEND_BASE_URL = "https://www.zkjpoc.icu";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
