@@ -19,11 +19,8 @@ preference_scorer.py          # personalized preference scorer
 rule_scorer.py                # missing-aware rule scorer
 scenes.py                     # 18 scene definitions
 requirements_poc.txt          # POC dependencies
-requirements_runtime.txt      # minimal default Docker/runtime dependencies
-Dockerfile                    # container image for VPS smoke testing
-docker-compose.yml            # optional Docker Compose runner
-poc_test_payloads.json        # fixed multi-user test payloads
-poc_smoke_test.py             # one-command smoke test
+smoke_test/poc_test_payloads.json  # fixed multi-user test payloads
+smoke_test/poc_smoke_test.py       # one-command smoke test
 POC_BACKEND_API.md            # detailed API documentation
 FRONTEND_CONTEXT_FIELDS.md    # frontend context field contract
 ```
@@ -68,24 +65,12 @@ Health check:
 curl http://127.0.0.1:8000/health
 ```
 
-Quick smoke test:
-
-```bash
-python3 smoke_backend.py --base-url http://127.0.0.1:8000
-```
-
-More complete smoke test:
-
-```bash
-python3 smoke_test/poc_smoke_test.py --base-url http://127.0.0.1:8000
-```
-
 Expected response:
 
 ```json
 {
   "ok": true,
-  "model_version": "poc-2026-05-26",
+  "model_version": "poc-2026-06-02-place-candidates",
   "semantic_mode": "none"
 }
 ```
@@ -116,6 +101,14 @@ curl -X POST http://127.0.0.1:8000/v1/recommend \
       "timezone": "Asia/Shanghai",
       "hour": 8,
       "weekday": 1,
+      "place_candidates": [
+        {
+          "place_type": "在途",
+          "confidence": 0.72,
+          "distance_m": 35.0,
+          "source": "mapkit_category"
+        }
+      ],
       "place_type": "在途",
       "place_type_available": 1,
       "place_type_confidence": 0.72,
@@ -131,13 +124,21 @@ curl -X POST http://127.0.0.1:8000/v1/recommend \
   }'
 ```
 
+新版前端推荐传最多 3 个 `place_candidates`，按 confidence 降序排列。后端会按 `1.0 / 0.45 / 0.20` 的排名权重软融合，并自动用 Top-1 补齐旧版 `place_type` 字段。旧请求仍然兼容。
+
+地点枚举：
+
+```text
+任意、住宅区、商场、酒店、餐厅、公园、写字楼、机场、图书馆、海边、户外、在途、高铁站、地铁站、运动场所
+```
+
 Response shape:
 
 ```json
 {
   "request_id": "req_001",
   "user_id": "u_001",
-  "model_version": "poc-2026-05-26",
+  "model_version": "poc-2026-06-02-place-candidates",
   "recommendations": [
     {
       "rank": 1,
@@ -258,57 +259,7 @@ For missing permissions, send explicit availability flags:
 
 The backend will treat these as missing signals, not negative evidence.
 
-## 9. Docker on a VPS without a domain
-
-Use this when the code is already pulled on a VPS and you want to test by IP address plus port.
-
-Build and run:
-
-```bash
-cd backend
-docker build -t reco-poc-backend .
-docker run -d \
-  --name reco-poc-backend \
-  -p 8000:8000 \
-  -v "$PWD/data:/app/data" \
-  reco-poc-backend
-```
-
-Or with Docker Compose:
-
-```bash
-cd backend
-docker compose up -d --build
-```
-
-Test from the VPS:
-
-```bash
-curl http://127.0.0.1:8000/health
-python3 smoke_backend.py --base-url http://127.0.0.1:8000
-python3 smoke_test/poc_smoke_test.py --base-url http://127.0.0.1:8000
-```
-
-Test from your laptop, replacing the IP:
-
-```bash
-curl http://YOUR_VPS_PUBLIC_IP:8000/health
-```
-
-If laptop access fails but VPS local access works, open TCP port `8000` in the VPS firewall and cloud security group.
-
-Useful commands:
-
-```bash
-docker logs reco-poc-backend
-docker ps
-docker stop reco-poc-backend
-docker rm reco-poc-backend
-```
-
-The default Docker image uses `POC_SEMANTIC=none` and `requirements_runtime.txt` to keep the first deployment small and stable. Runtime data is stored under `backend/data` via the `./data:/app/data` volume.
-
-## 10. Smoke Test
+## 9. Smoke Test
 
 Run an in-process smoke test with temporary SQLite files:
 
@@ -339,6 +290,7 @@ u_minimal_context
 u_geo_routine
 u_travel_or_new_place
 u_low_accuracy_geo
+u_mixed_place_candidates
 ```
 
 The smoke test checks:
@@ -353,9 +305,10 @@ feedback/history update
 geo cluster reuse
 low-accuracy geo skip
 impression does not update preference
+Top-3 place candidate soft fusion
 ```
 
-## 11. More Documentation
+## 10. More Documentation
 
 For detailed request/response schemas, see:
 
