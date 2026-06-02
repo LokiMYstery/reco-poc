@@ -24,6 +24,9 @@ targets:
     dependencies:
       - package: RecoPOC
         product: RecoPOC
+    configFiles:
+      Debug: Config/RecoPOCHost.xcconfig
+      Release: Config/RecoPOCHost.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.recopoc.host

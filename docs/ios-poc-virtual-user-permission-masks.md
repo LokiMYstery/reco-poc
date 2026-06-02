@@ -73,7 +73,7 @@ VirtualContext
 | 音频输出 | `bluetooth` | `耳机` / `车载蓝牙` / `家用音响` / `任意` |
 | 定位原始数据 | `lat`、`lon`、`horizontal_accuracy_m`、`location_timestamp` | 本地原始定位数据 |
 | 定位权限状态 | `location_authorization`、`location_accuracy_authorization` | 用于模拟 full / approximate / denied |
-| 地点派生 | `place_type`、`place_type_confidence`、`place_type_quality` | 由 CoreLocation + MapKit / POI 映射得到 |
+| 地点派生 | `place_candidates`、`place_type`、`place_type_confidence`、`place_type_quality` | 由 CoreLocation + 高德 Web 服务 POI 映射得到；候选只保留脱敏类型、置信度、距离、source、quality |
 | 运动 | `activity_state`、`activity_confidence` | CoreMotion |
 | 健康 | `heart_rate_zone`、`heart_rate_quality`、`steps_last_10min`、`recent_workout_minutes_24h`、`sleep_quality` | HealthKit / Apple Watch |
 | 噪音 | `noise_class`、`noise_db` | 麦克风采样后本地分类，可选 |
@@ -202,6 +202,7 @@ lon
 horizontal_accuracy_m
 location_timestamp
 place_type
+place_candidates
 place_type_available = 1
 place_type_confidence
 place_type_quality
@@ -213,6 +214,7 @@ place_type_quality
 latitude
 longitude
 location_accuracy_m
+place_candidates
 place_type
 place_type_available = 1
 place_type_confidence
@@ -228,7 +230,7 @@ u_location_only_no_health
 
 ### 5.2 `location=approximate`
 
-模拟用户只允许大致位置，或 MapKit / POI 映射低置信。
+模拟用户只允许大致位置，或高德 POI 映射低置信。
 
 建议处理：
 
@@ -237,6 +239,7 @@ lat/lon 降精度或替换为 coarse location
 horizontal_accuracy_m 设置为较大值，例如 1000m-5000m；上传层可选择不传经纬度，或传递并让后端因 `location_accuracy_m > 250` 跳过 geo 聚类
 place_type_confidence 降低，例如 0.25-0.55
 place_type_quality = noisy_mapping
+place_candidates 如保留则逐项降置信，confidence 封顶 0.25，并标记 quality = noisy_mapping
 ```
 
 示例输出：
@@ -250,9 +253,18 @@ place_type_quality = noisy_mapping
   "longitude": 121.47,
   "location_accuracy_m": 3000,
   "location_accuracy_authorization": "reducedAccuracy",
-  "place_type": "任意",
+  "place_candidates": [
+    {
+      "place_type": "运动场所",
+      "confidence": 0.25,
+      "distance_m": 32.0,
+      "source": "amap_typecode_name",
+      "quality": "noisy_mapping"
+    }
+  ],
+  "place_type": "运动场所",
   "place_type_available": 1,
-  "place_type_confidence": 0.35,
+  "place_type_confidence": 0.25,
   "place_type_quality": "noisy_mapping"
 }
 ```
@@ -275,6 +287,7 @@ latitude
 longitude
 location_accuracy_m
 location_timestamp
+place_candidates
 ```
 
 输出：

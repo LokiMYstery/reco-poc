@@ -177,6 +177,49 @@ public struct RawSensorField: Codable, Equatable, Sendable {
     }
 }
 
+public struct PlaceCandidate: Codable, Equatable, Sendable {
+    public var placeType: String
+    public var confidence: Double
+    public var distanceM: Double?
+    public var source: String
+    public var quality: String
+
+    public init(
+        placeType: String,
+        confidence: Double,
+        distanceM: Double? = nil,
+        source: String,
+        quality: String
+    ) {
+        self.placeType = placeType
+        self.confidence = confidence
+        self.distanceM = distanceM
+        self.source = source
+        self.quality = quality
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case placeType = "place_type"
+        case confidence
+        case distanceM = "distance_m"
+        case source
+        case quality
+    }
+
+    public var jsonValue: JSONValue {
+        var fields: [String: JSONValue] = [
+            "place_type": .string(placeType),
+            "confidence": .double(confidence),
+            "source": .string(source),
+            "quality": .string(quality)
+        ]
+        if let distanceM {
+            fields["distance_m"] = .double(distanceM)
+        }
+        return .object(fields)
+    }
+}
+
 public struct RawSensorSnapshot: Codable, Equatable, Sendable {
     public var startedAt: Date
     public var frozenAt: Date
@@ -193,6 +236,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
     public var placeTypeAvailable: Bool
     public var placeTypeConfidence: Double
     public var placeTypeQuality: String
+    public var placeCandidates: [PlaceCandidate]
     public var latitude: Double?
     public var longitude: Double?
     public var locationAccuracyM: Double?
@@ -223,6 +267,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
         placeTypeAvailable: Bool,
         placeTypeConfidence: Double,
         placeTypeQuality: String,
+        placeCandidates: [PlaceCandidate] = [],
         latitude: Double? = nil,
         longitude: Double? = nil,
         locationAccuracyM: Double? = nil,
@@ -256,6 +301,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
         self.placeTypeAvailable = placeTypeAvailable
         self.placeTypeConfidence = placeTypeConfidence
         self.placeTypeQuality = placeTypeQuality
+        self.placeCandidates = Array(placeCandidates.prefix(3))
         self.latitude = latitude
         self.longitude = longitude
         self.locationAccuracyM = locationAccuracyM
@@ -299,6 +345,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
         let placeType = Self.stringValue(for: .location, key: "place_type", in: fieldMap) ?? "任意"
         let placeTypeConfidence = Self.doubleValue(for: .location, key: "place_type_confidence", in: fieldMap) ?? 0
         let placeTypeQuality = Self.stringValue(for: .location, key: "place_type_quality", in: fieldMap) ?? Self.defaultQuality(for: fieldMap[.location]?.state)
+        let placeCandidates = Self.placeCandidatesValue(for: .location, key: "place_candidates", in: fieldMap)
         let poiLookupAvailable = Self.intValue(for: .location, key: "poi_lookup_available", in: fieldMap)
         let latitude = Self.doubleValue(for: .location, key: "latitude", in: fieldMap) ?? Self.doubleValue(for: .location, key: "lat", in: fieldMap)
         let longitude = Self.doubleValue(for: .location, key: "longitude", in: fieldMap) ?? Self.doubleValue(for: .location, key: "lon", in: fieldMap)
@@ -334,6 +381,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
             placeTypeAvailable: Self.isCaptured(fieldMap[.location]) && placeType != "任意" && (poiLookupAvailable.map { $0 > 0 } ?? true),
             placeTypeConfidence: placeTypeConfidence,
             placeTypeQuality: placeTypeQuality,
+            placeCandidates: placeCandidates,
             latitude: latitude,
             longitude: longitude,
             locationAccuracyM: locationAccuracyM,
@@ -373,6 +421,15 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
         placeTypeAvailable: true,
         placeTypeConfidence: 0.78,
         placeTypeQuality: "exact_or_good_mapping",
+        placeCandidates: [
+            PlaceCandidate(
+                placeType: "写字楼",
+                confidence: 0.78,
+                distanceM: 32,
+                source: "amap_typecode_name",
+                quality: "exact_or_good_mapping"
+            )
+        ],
         latitude: 31.2304,
         longitude: 121.4737,
         locationAccuracyM: 35,
@@ -405,6 +462,40 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
     private static func intValue(for sensor: RawSensorName, key: String, in fields: [RawSensorName: RawSensorField]) -> Int? {
         switch fields[sensor]?.reading?.values[key] {
         case .int(let value): return value
+        default: return nil
+        }
+    }
+
+    private static func placeCandidatesValue(for sensor: RawSensorName, key: String, in fields: [RawSensorName: RawSensorField]) -> [PlaceCandidate] {
+        guard case .array(let values) = fields[sensor]?.reading?.values[key] else { return [] }
+        return values.prefix(3).compactMap { value in
+            guard case .object(let object) = value,
+                  case .string(let placeType)? = object["place_type"],
+                  let confidence = doubleValue("confidence", in: object),
+                  case .string(let source)? = object["source"]
+            else {
+                return nil
+            }
+            let quality: String
+            if case .string(let candidateQuality)? = object["quality"] {
+                quality = candidateQuality
+            } else {
+                quality = confidence >= 0.70 ? "exact_or_good_mapping" : "noisy_mapping"
+            }
+            return PlaceCandidate(
+                placeType: placeType,
+                confidence: confidence,
+                distanceM: doubleValue("distance_m", in: object),
+                source: source,
+                quality: quality
+            )
+        }
+    }
+
+    private static func doubleValue(_ key: String, in object: [String: JSONValue]) -> Double? {
+        switch object[key] {
+        case .double(let value): return value
+        case .int(let value): return Double(value)
         default: return nil
         }
     }

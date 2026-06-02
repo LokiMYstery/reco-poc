@@ -20,11 +20,12 @@ public struct RecoPOCRuntimeMode: Sendable {
   }
 
   public static func nativeCapable(
+    amapConfiguration: AmapPOIConfiguration = .disabled,
     permissionCapabilityStatusProvider: any PermissionCapabilityStatusProviding =
       NativeCapablePermissionCapabilityStatusProvider()
   ) -> RecoPOCRuntimeMode {
     RecoPOCRuntimeMode(
-      sensorAcquirer: NativeCapableRawSensorAcquirer(),
+      sensorAcquirer: NativeCapableRawSensorAcquirer(amapConfiguration: amapConfiguration),
       permissionCapabilityStatusProvider: permissionCapabilityStatusProvider
     )
   }
@@ -101,13 +102,17 @@ public struct DependencyContainer: Sendable {
 
   public static func nativeCapableLive(
     baseURL: URL = URL(string: "http://127.0.0.1:8000")!,
+    amapConfiguration: AmapPOIConfiguration = .disabled,
     permissionCapabilityStatusProvider: (any PermissionCapabilityStatusProviding)? = nil
   ) -> DependencyContainer {
     let permissionProvider = permissionCapabilityStatusProvider
       ?? NativeCapablePermissionCapabilityStatusProvider(networkWarmupURL: baseURL)
 
     return DependencyContainer(
-      runtimeMode: .nativeCapable(permissionCapabilityStatusProvider: permissionProvider),
+      runtimeMode: .nativeCapable(
+        amapConfiguration: amapConfiguration,
+        permissionCapabilityStatusProvider: permissionProvider
+      ),
       contextDeriver: VirtualContextDeriver(),
       payloadMapper: BackendPayloadMapper(),
       apiClient: LiveRecommendationAPIClient(baseURL: baseURL),

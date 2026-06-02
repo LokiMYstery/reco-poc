@@ -564,14 +564,14 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             SensorSnapshotRowModel(
                 id: "place",
                 title: "Place",
-                value: snapshot.placeType,
+                value: Self.placeValue(from: snapshot),
                 detail: Self.detail([
                     "available \(snapshot.placeTypeAvailable ? "yes" : "no")",
                     "confidence \(Self.percent(snapshot.placeTypeConfidence))",
                     "quality \(snapshot.placeTypeQuality)",
                     Self.sensorFieldString(for: .location, key: "place_source", in: snapshot).map { "source \($0)" },
                     Self.sensorFieldInt(for: .location, key: "poi_lookup_available", in: snapshot).map { "poi lookup \($0 > 0 ? "yes" : "no")" },
-                ])
+                ] + Self.placeCandidateDetails(from: snapshot))
             ),
             SensorSnapshotRowModel(
                 id: "location",
@@ -733,6 +733,26 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             return "Not captured"
         }
         return "\(String(format: "%.5f", latitude)), \(String(format: "%.5f", longitude))"
+    }
+
+    private static func placeValue(from snapshot: RawSensorSnapshot) -> String {
+        let candidates = Array(snapshot.placeCandidates.prefix(3))
+        guard !candidates.isEmpty else { return snapshot.placeType }
+        return candidates
+            .map { "\($0.placeType) \(Self.percent($0.confidence))" }
+            .joined(separator: " · ")
+    }
+
+    private static func placeCandidateDetails(from snapshot: RawSensorSnapshot) -> [String?] {
+        snapshot.placeCandidates.prefix(3).enumerated().map { index, candidate in
+            var parts = ["#\(index + 1) \(candidate.placeType) \(Self.percent(candidate.confidence))"]
+            if let distanceM = candidate.distanceM {
+                parts.append(Self.measurement(distanceM, unit: "m"))
+            }
+            parts.append(candidate.source)
+            parts.append(candidate.quality)
+            return parts.joined(separator: ", ")
+        }
     }
 
     private static func healthValue(from snapshot: RawSensorSnapshot) -> String {

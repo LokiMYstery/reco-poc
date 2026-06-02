@@ -175,11 +175,12 @@ public struct NativeCapableRawSensorAcquirer: RawSensorAcquiring {
     private let scheduler: any SensorDeadlineScheduling
 
     public init(
-        providers: [any RawSensorReadingProvider] = NativeSensorProviderCatalog().makeProviders(),
+        providers: [any RawSensorReadingProvider]? = nil,
+        amapConfiguration: AmapPOIConfiguration = .disabled,
         clock: SensorClock = SystemSensorClock(),
         scheduler: any SensorDeadlineScheduling = TaskDeadlineScheduler()
     ) {
-        self.providers = providers
+        self.providers = providers ?? NativeSensorProviderCatalog(amapConfiguration: amapConfiguration).makeProviders()
         self.clock = clock
         self.scheduler = scheduler
     }

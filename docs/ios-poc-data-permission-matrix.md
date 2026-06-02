@@ -18,7 +18,7 @@
 |---|---|---|---|---|
 | 无系统权限 | 时间、时区、App 内行为 | `timestamp`、`timezone`、`hour`、`weekday`、`app_event` | `Date`、`Calendar`、`TimeZone`、App 埋点 | 必做 |
 | 低权限 / 通常无弹窗 | 网络、音频输出路由 | `network`、`bluetooth` | `NWPathMonitor`、`AVAudioSession` | 建议做 |
-| 定位权限 | 经纬度、定位精度、地点类型 | 采集层：`lat`、`lon`、`horizontal_accuracy_m`、`place_type`；上传层：`latitude`、`longitude`、`location_accuracy_m` | `CoreLocation`、`MapKit` | 第一版核心；经纬度上传为可选增强 |
+| 定位权限 | 经纬度、定位精度、地点类型 | 采集层：`lat`、`lon`、`horizontal_accuracy_m`、`place_candidates`、`place_type`；上传层：`latitude`、`longitude`、`location_accuracy_m` | `CoreLocation`、高德 Web 服务 POI | 第一版核心；经纬度上传为可选增强 |
 | 运动与健身权限 | 运动状态 | `activity_state`、`activity_state_available` | `CoreMotion` | 有权限则做 |
 | HealthKit 权限 | 心率、步数、运动记录、睡眠 | `heart_rate_zone`、`steps_last_10min`、`recent_workout_minutes_24h`、`sleep_quality` | `HealthKit`、Apple Watch | 后续增强 |
 | 麦克风权限 | 噪音分类 | `noise_class`、`noise_available` | `AVAudioSession` / 本地音频采样 | 后续增强，隐私高 |
@@ -98,7 +98,8 @@
 
 | 字段 | 类型 | 来源 | 后续用途 |
 |---|---|---|---|
-| `place_type` | string | CoreLocation 坐标 + MapKit POI / 地点类别映射 | 推荐地点上下文 |
+| `place_candidates` | array | CoreLocation 坐标 + 高德 Web 服务 POI / 地点类别映射 | 推荐地点上下文 Top-3，最多 3 项；可省略 |
+| `place_type` | string | CoreLocation 坐标 + 高德 Web 服务 POI / 地点类别映射 | 推荐地点上下文兼容字段，取 Top-1 |
 | `place_type_available` | int | 定位和 POI 映射是否成功 | `1` 可用，`0` 不可用 |
 | `place_type_confidence` | float | 前端根据定位精度、POI 距离、候选冲突等计算 | 后端低置信降权 |
 | `place_type_quality` | string | 前端映射质量判断 | 是否进入细分历史 bucket |
@@ -120,6 +121,7 @@
 在途
 高铁站
 地铁站
+运动场所
 ```
 
 建议质量枚举：
@@ -130,25 +132,27 @@ noisy_mapping
 unavailable
 ```
 
-### 4.3 MapKit / POI 映射思路
+### 4.3 高德 POI 映射思路
 
 推荐流程：
 
 1. 用 `CLLocationManager` 获取当前 `lat/lon` 和 `horizontal_accuracy_m`。
-2. 基于当前位置构造 MapKit 查询区域。
-3. 用 MapKit / POI 候选结果获取地点类别、距离、名称等本地映射依据。
-4. 将 Apple / MapKit 地点类别映射到项目内部 `place_type`。
+2. 按本地配置把 CoreLocation 坐标转换为高德坐标，或直接使用已确认的高德坐标。
+3. 调用高德 Web 服务周边 POI，读取本地决策需要的 `typecode`、`type`、`name`、`distance`、`location`。
+4. 将高德 typecode 主证据和 name/type 辅助证据映射到项目内部 `place_type`。
 5. 根据定位精度、POI 距离、候选冲突、停留时间或连续采样稳定性计算 `place_type_confidence`。
-6. 低置信时输出 `place_type="任意"`，或 `place_type_quality="noisy_mapping"`。
+6. 默认上传脱敏 `place_candidates` Top-3；兼容字段 `place_type_*` 使用 Top-1。
+7. 低置信或高德不可用时输出 `place_type="任意"`、`place_type_available=0`、`place_type_quality="unavailable"`。
 
 示例映射方向：
 
-| Map / POI 含义 | 内部 `place_type` |
+| 高德 POI 含义 | 内部 `place_type` |
 |---|---|
 | airport | `机场` |
 | train station / transit station | `高铁站` / `地铁站` / `在途` |
 | library | `图书馆` |
 | park | `公园` |
+| sports venue / gym / stadium | `运动场所` |
 | restaurant / cafe | `餐厅` |
 | shopping mall / store | `商场` |
 | lodging / hotel | `酒店` |
@@ -158,7 +162,7 @@ unavailable
 
 ### 4.4 定位不可用时
 
-如果无定位权限、定位失败、POI 映射失败，派生字段建议保持：
+如果无定位权限、定位失败、高德 key 缺失或 POI 映射失败，派生字段建议保持：
 
 ```json
 {
@@ -168,6 +172,8 @@ unavailable
   "place_type_quality": "unavailable"
 }
 ```
+
+此时不上传 `place_candidates`。
 
 ---
 
@@ -342,7 +348,7 @@ network
 bluetooth
 ```
 
-### Step 3：定位与 MapKit 地点类型
+### Step 3：定位与高德 POI 地点类型
 
 ```text
 lat
@@ -352,6 +358,7 @@ location_timestamp
 location_authorization
 location_accuracy_authorization
 
+place_candidates
 place_type
 place_type_available
 place_type_confidence

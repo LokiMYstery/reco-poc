@@ -51,14 +51,36 @@ public struct VirtualContextDeriver: VirtualContextDeriving {
             fields["place_type_available"] = .int(snapshot.placeTypeAvailable ? 1 : 0)
             fields["place_type_confidence"] = .double(snapshot.placeTypeConfidence)
             fields["place_type_quality"] = .string(snapshot.placeTypeQuality)
+            if !snapshot.placeCandidates.isEmpty {
+                fields["place_candidates"] = .array(snapshot.placeCandidates.map(\.jsonValue))
+            }
             if let latitude = snapshot.latitude { fields["latitude"] = .double(latitude) }
             if let longitude = snapshot.longitude { fields["longitude"] = .double(longitude) }
             if let accuracy = snapshot.locationAccuracyM { fields["location_accuracy_m"] = .double(accuracy) }
         case .approximate:
-            fields["place_type"] = .string(snapshot.placeTypeAvailable ? snapshot.placeType : "任意")
-            fields["place_type_available"] = .int(snapshot.placeTypeAvailable ? 1 : 0)
-            fields["place_type_confidence"] = .double(min(snapshot.placeTypeConfidence, 0.25))
-            fields["place_type_quality"] = .string("noisy_mapping")
+            if snapshot.placeTypeAvailable {
+                fields["place_type"] = .string(snapshot.placeType)
+                fields["place_type_available"] = .int(1)
+                fields["place_type_confidence"] = .double(min(snapshot.placeTypeConfidence, 0.25))
+                fields["place_type_quality"] = .string("noisy_mapping")
+                let candidates = snapshot.placeCandidates.map { candidate in
+                    PlaceCandidate(
+                        placeType: candidate.placeType,
+                        confidence: min(candidate.confidence, 0.25),
+                        distanceM: candidate.distanceM,
+                        source: candidate.source,
+                        quality: "noisy_mapping"
+                    ).jsonValue
+                }
+                if !candidates.isEmpty {
+                    fields["place_candidates"] = .array(candidates)
+                }
+            } else {
+                fields["place_type"] = .string("任意")
+                fields["place_type_available"] = .int(0)
+                fields["place_type_confidence"] = .double(0)
+                fields["place_type_quality"] = .string("unavailable")
+            }
             if let latitude = snapshot.latitude { fields["latitude"] = .double((latitude * 100).rounded() / 100) }
             if let longitude = snapshot.longitude { fields["longitude"] = .double((longitude * 100).rounded() / 100) }
             fields["location_accuracy_m"] = .double(max(snapshot.locationAccuracyM ?? 1000, 1000))

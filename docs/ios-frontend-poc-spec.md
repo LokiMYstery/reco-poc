@@ -32,9 +32,9 @@ The app is an experimental tool, not a polished consumer product.
 - `docs/ios-poc-data-permission-matrix.md`
 - `docs/ios-poc-virtual-user-permission-masks.md`
 - `docs/ios-poc-questionnaire-spec.md`
-- `docs/ios-poc-sensor-acquisition-spec.md`
+- `docs/ios-poc-amap-poi-scoring-spec.md`
 
-Low-level non-questionnaire sensor acquisition and field mapping are specified in `docs/ios-poc-sensor-acquisition-spec.md`. This main SPEC only defines product flow, screens, orchestration, virtual-user handling, and feedback behavior; implementation should follow the sensor acquisition SPEC for concrete context field collection, timeout, downgrade, and confidence rules.
+Low-level non-questionnaire sensor acquisition and field mapping are specified by `docs/ios-poc-data-permission-matrix.md` and the Amap POI scoring chain in `docs/ios-poc-amap-poi-scoring-spec.md`. This main SPEC only defines product flow, screens, orchestration, virtual-user handling, and feedback behavior; implementation should follow those docs for concrete context field collection, timeout, downgrade, and confidence rules.
 
 ## 3. Product Principles
 
@@ -109,7 +109,7 @@ When the subject changes permission willingness or questionnaire intent, the app
 
 ### 4.4 Data Acquisition Timing
 
-Sensor acquisition details are delegated to `docs/ios-poc-sensor-acquisition-spec.md`. In summary, a recommendation run starts a parallel sensor collection phase with a fixed **15 second** total deadline; the app freezes the `RawSensorSnapshot` when all tasks complete or the deadline is reached, then derives virtual contexts and uploads coarse backend fields according to that SPEC. The main UI should surface the phase statuses and durations defined there, but should not duplicate field-level mapping logic.
+Sensor acquisition details are delegated to `docs/ios-poc-data-permission-matrix.md` and the Amap POI scoring chain in `docs/ios-poc-amap-poi-scoring-spec.md`. In summary, a recommendation run starts a parallel sensor collection phase with a fixed **15 second** total deadline; the app freezes the `RawSensorSnapshot` when all tasks complete or the deadline is reached, then derives virtual contexts and uploads coarse backend fields according to those SPECs. The main UI should surface the phase statuses and durations defined there, but should not duplicate field-level mapping logic.
 
 From app open and from manual request trigger, the app must record and display timing information for key phases:
 
@@ -419,7 +419,7 @@ The agent should ask before changing:
 
 ## 11. Open Follow-up for Later SPECs
 
-- Changes to the concrete context field acquisition/mapping rules now owned by `docs/ios-poc-sensor-acquisition-spec.md`.
+- Changes to the concrete context field acquisition/mapping rules now owned by `docs/ios-poc-data-permission-matrix.md` and `docs/ios-poc-amap-poi-scoring-spec.md`.
 - Exact Swift data model definitions.
 - Exact request/response model structs.
 - Backend contract changes if `intent` becomes separate from `initial_need` / `initial_needs`.

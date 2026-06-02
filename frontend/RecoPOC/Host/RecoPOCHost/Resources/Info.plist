@@ -45,6 +45,14 @@
 	<string>RecoPOC uses motion activity only to derive local activity context when you enable it.</string>
 	<key>RecoBackendBaseURL</key>
 	<string>$(RECO_BACKEND_BASE_URL)</string>
+	<key>RecoAmapAPIKey</key>
+	<string>$(RECO_AMAP_API_KEY)</string>
+	<key>RecoAmapInputCoordSys</key>
+	<string>$(RECO_AMAP_INPUT_COORDSYS)</string>
+	<key>RecoAmapPOIEnabled</key>
+	<string>$(RECO_AMAP_POI_ENABLED)</string>
+	<key>RecoAmapPOIRadiusM</key>
+	<string>$(RECO_AMAP_POI_RADIUS_M)</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

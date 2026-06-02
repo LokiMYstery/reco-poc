@@ -1,7 +1,7 @@
 import Foundation
 
-#if canImport(MapKit)
-import MapKit
+#if canImport(CoreLocation)
+import CoreLocation
 #endif
 
 #if canImport(Testing)
@@ -183,104 +183,97 @@ struct SensorAcquisitionTests {
         #expect(snapshot.statuses[RawSensorName.weather.rawValue]?.message == "weatherkit_error:TestError: Simulated WeatherKit failure")
     }
 
-    #if canImport(MapKit)
-    @Test("native place mapper maps common POI categories into backend place labels")
-    func nativePlaceMapperCommonCategories() async throws {
-        #expect(NativePlaceTypeMapper.map(category: .airport, distance: 40).placeType == "机场")
-        #expect(NativePlaceTypeMapper.map(category: .hotel, distance: 40).placeType == "酒店")
-        #expect(NativePlaceTypeMapper.map(category: .restaurant, distance: 40).placeType == "餐厅")
-        #expect(NativePlaceTypeMapper.map(category: .park, distance: 40).placeType == "公园")
-        #expect(NativePlaceTypeMapper.map(category: .store, distance: 120).quality == "noisy_mapping")
-        #expect(NativePlaceTypeMapper.map(category: .store, distance: 40).source == "mapkit_query_probe")
-        #expect(NativePlaceTypeMapper.map(category: .store, distance: 40).poiLookupAvailable == true)
+    @Test("AMap place mapper uses typecode as primary evidence and supports sports venues")
+    func amapPlaceMapperTypecodeAndSports() async throws {
+        let restaurant = NativePlaceTypeMapper.testCandidate(typecode: "050100", type: "餐饮服务", name: "测试餐厅", distance: 40)
+        let sports = NativePlaceTypeMapper.testCandidate(typecode: "080100", type: "体育休闲服务;运动场馆", name: "市民体育馆", distance: 32)
+        let office = NativePlaceTypeMapper.testCandidate(typecode: "170000", type: "公司企业", name: "测试科技公司", distance: 60)
+
+        #expect(restaurant.placeType == "餐厅")
+        #expect(restaurant.source == "amap_typecode_name")
+        #expect(sports.placeType == "运动场所")
+        #expect(sports.confidence >= 0.70)
+        #expect(office.placeType == "写字楼")
     }
 
-
-    @Test("query place candidates infer low-confidence office labels from mainland AOI text")
-    func queryPlaceCandidateTextMapping() async throws {
+    @Test("AMap name-only candidates are capped and still mapped when typecode is absent")
+    func amapPlaceMapperNameOnlyCap() async throws {
         let candidate = NativePlaceTypeMapper.testCandidate(
-            category: nil,
-            query: "研究院",
-            itemName: "中国科学院上海高等研究院",
+            name: "中国科学院上海高等研究院",
             distance: 40
         )
         let place = NativePlaceTypeMapper.testDecision(candidates: [candidate])
 
         #expect(candidate.placeType == "写字楼")
-        #expect(candidate.confidence == 0.60)
+        #expect(candidate.source == "amap_name_keyword")
+        #expect(candidate.confidence <= 0.55)
         #expect(place.placeType == "写字楼")
-        #expect(place.poiLookupAvailable == true)
         #expect(place.quality == "noisy_mapping")
-        #expect(place.source == "mapkit_query_probe:研究院")
     }
 
-    @Test("query place candidates prefer category over conflicting query text")
-    func queryPlaceCandidateCategoryBeatsConflictingQuery() async throws {
-        let candidate = NativePlaceTypeMapper.testCandidate(
-            category: .restaurant,
-            query: "酒店",
-            itemName: "测试酒店",
+    @Test("AMap mapper downgrades conflicting name and typecode evidence")
+    func amapPlaceMapperConflictPenalty() async throws {
+        let consistent = NativePlaceTypeMapper.testCandidate(
+            typecode: "050100",
+            type: "餐饮服务",
+            name: "测试餐厅",
+            distance: 40
+        )
+        let conflicting = NativePlaceTypeMapper.testCandidate(
+            typecode: "050100",
+            type: "餐饮服务",
+            name: "测试酒店",
             distance: 40
         )
 
-        #expect(candidate.placeType == "餐厅")
-        #expect(candidate.confidence < NativePlaceTypeMapper.testCandidate(category: .restaurant, query: "餐厅", itemName: "测试餐厅", distance: 40).confidence)
+        #expect(conflicting.placeType == "餐厅")
+        #expect(conflicting.confidence < consistent.confidence)
     }
 
-    @Test("query place decision ignores very distant candidates")
-    func queryPlaceDecisionIgnoresDistantCandidates() async throws {
+    @Test("AMap decision aggregates same type candidates and returns sanitized Top-3")
+    func amapDecisionAggregatesAndReturnsTop3() async throws {
         let place = NativePlaceTypeMapper.testDecision(candidates: [
-            NativePlaceTypeMapper.testCandidate(
-                category: nil,
-                query: "酒店",
-                itemName: "远处酒店",
-                distance: 1_200
-            )
-        ])
-
-        #expect(place.placeType == "户外")
-        #expect(place.poiLookupAvailable == false)
-    }
-
-    @Test("query place decision aggregates multiple same-type candidates")
-    func queryPlaceDecisionAggregatesSameTypeCandidates() async throws {
-        let place = NativePlaceTypeMapper.testDecision(candidates: [
-            NativePlaceTypeMapper.testCandidate(category: .restaurant, query: "餐厅", itemName: "餐厅 A", distance: 40, rank: 0),
-            NativePlaceTypeMapper.testCandidate(category: .restaurant, query: "餐厅", itemName: "餐厅 B", distance: 50, rank: 1),
-            NativePlaceTypeMapper.testCandidate(category: .hotel, query: "酒店", itemName: "酒店 A", distance: 500, rank: 0),
+            NativePlaceTypeMapper.testCandidate(typecode: "050100", type: "餐饮服务", name: "餐厅 A", distance: 40, rank: 0),
+            NativePlaceTypeMapper.testCandidate(typecode: "050100", type: "餐饮服务", name: "餐厅 B", distance: 50, rank: 1),
+            NativePlaceTypeMapper.testCandidate(typecode: "080100", type: "体育休闲服务;运动场馆", name: "体育馆", distance: 70, rank: 2),
+            NativePlaceTypeMapper.testCandidate(typecode: "100000", type: "住宿服务", name: "酒店 A", distance: 180, rank: 3),
         ])
 
         #expect(place.placeType == "餐厅")
-        #expect(place.confidence > 0.80)
+        #expect(place.confidence >= 0.80)
         #expect(place.poiLookupAvailable == true)
+        #expect(place.candidates.count == 3)
+        #expect(place.candidates[0].placeType == "餐厅")
+        #expect(place.candidates.allSatisfy { candidate in
+            ["amap_typecode", "amap_typecode_name", "amap_name_keyword"].contains(candidate.source)
+        })
     }
 
-    @Test("query place decision downgrades close runner-up conflicts")
-    func queryPlaceDecisionDowngradesCloseRunnerUp() async throws {
+    @Test("AMap decision downgrades close runner-up conflicts")
+    func amapDecisionDowngradesCloseRunnerUp() async throws {
         let place = NativePlaceTypeMapper.testDecision(candidates: [
-            NativePlaceTypeMapper.testCandidate(category: .restaurant, query: "餐厅", itemName: "餐厅 A", distance: 40),
-            NativePlaceTypeMapper.testCandidate(category: .hotel, query: "酒店", itemName: "酒店 A", distance: 40),
+            NativePlaceTypeMapper.testCandidate(typecode: "050100", type: "餐饮服务", name: "餐厅 A", distance: 40),
+            NativePlaceTypeMapper.testCandidate(typecode: "100000", type: "住宿服务", name: "酒店 A", distance: 40),
         ])
 
         #expect(place.poiLookupAvailable == true)
         #expect(place.quality == "noisy_mapping")
-        #expect(place.confidence <= 0.75)
+        #expect(place.confidence < place.candidates[1].confidence + 0.12)
     }
 
-    @Test("query place decision falls back when low-confidence classes are ambiguous")
-    func queryPlaceDecisionFallsBackWhenAmbiguousAndWeak() async throws {
-        let place = NativePlaceTypeMapper.testDecision(candidates: [
-            NativePlaceTypeMapper.testCandidate(category: nil, query: "餐厅", itemName: nil, distance: 500),
-            NativePlaceTypeMapper.testCandidate(category: nil, query: "酒店", itemName: nil, distance: 500),
-        ])
+    @Test("AMap decision returns unavailable for zero usable candidates")
+    func amapDecisionReturnsUnavailableForNoCandidates() async throws {
+        let place = NativePlaceTypeMapper.testDecision(candidates: [])
 
-        #expect(place.placeType == "户外")
+        #expect(place.placeType == "任意")
+        #expect(place.confidence == 0)
+        #expect(place.quality == "unavailable")
         #expect(place.poiLookupAvailable == false)
+        #expect(place.candidates.isEmpty)
     }
-    #endif
 
-    @Test("fallback place labels are not treated as captured POI lookups")
-    func fallbackPlaceLabelDoesNotPretendPOIWasCaptured() async throws {
+    @Test("unavailable place labels are not treated as captured POI lookups")
+    func unavailablePlaceLabelDoesNotPretendPOIWasCaptured() async throws {
         let start = Date(timeIntervalSince1970: 7_500)
         let snapshot = RawSensorSnapshot(
             startedAt: start,
@@ -293,10 +286,10 @@ struct SensorAcquisitionTests {
                     reading: RawSensorReading(
                         observedAt: start,
                         values: [
-                            "place_type": .string("户外"),
-                            "place_type_confidence": .double(0.15),
-                            "place_type_quality": .string("noisy_mapping"),
-                            "place_source": .string("fallback_outdoor"),
+                            "place_type": .string("任意"),
+                            "place_type_confidence": .double(0),
+                            "place_type_quality": .string("unavailable"),
+                            "place_source": .string("amap_unavailable"),
                             "poi_lookup_available": .int(0),
                         ]
                     )
@@ -304,7 +297,7 @@ struct SensorAcquisitionTests {
             ]
         )
 
-        #expect(snapshot.placeType == "户外")
+        #expect(snapshot.placeType == "任意")
         #expect(snapshot.placeTypeAvailable == false)
         #expect(snapshot.statuses[RawSensorName.location.rawValue]?.availability == .available)
     }
@@ -514,6 +507,64 @@ struct SensorAcquisitionTests {
         #expect(outcome.reasonCode == "cllocation_timeout")
         #expect(outcome.steps.map(\.name).contains("cllocation.request"))
         #expect(outcome.steps.map(\.name).contains("corelocation.timeout"))
+    }
+
+    @Test("AMap location provider emits sanitized candidates without raw POI secrets")
+    func amapLocationProviderSanitizesPOIData() async throws {
+        let startedAt = Date()
+        let location = LocationSample(
+            CLLocation(
+                coordinate: CLLocationCoordinate2D(latitude: 31.2304, longitude: 121.4737),
+                altitude: 0,
+                horizontalAccuracy: 35,
+                verticalAccuracy: -1,
+                timestamp: startedAt
+            )
+        )
+        let provider = SystemLocationSnapshotProvider(
+            locationReader: StubLocationReader(report: LocationReadReport(outcome: .success(location))),
+            amapConfiguration: AmapPOIConfiguration(
+                apiKey: "secret-amap-key",
+                enabled: true,
+                inputCoordinateSystem: .autonavi
+            ),
+            amapClient: FakeAmapPOIClient(
+                pois: .success([
+                    AmapRawPOI(name: "秘密体育馆", type: "体育休闲服务;运动场馆", typecode: "080100", location: "121.4738,31.2305", distance: "32"),
+                    AmapRawPOI(name: "秘密餐厅", type: "餐饮服务", typecode: "050100", location: "121.4739,31.2306", distance: "220"),
+                ])
+            )
+        )
+
+        let outcome = await provider.readLocationSnapshotWithTrace()
+        guard case .reading(let reading) = outcome.result else {
+            Issue.record("Expected captured location reading.")
+            return
+        }
+
+        #expect(reading.values["place_type"] == JSONValue.string("运动场所"))
+        #expect(reading.values["place_source"] == JSONValue.string("amap_typecode_name"))
+        #expect(reading.values["poi_lookup_available"] == JSONValue.int(1))
+        let candidateValue: JSONValue? = reading.values["place_candidates"]
+        guard case .array(let candidates)? = candidateValue else {
+            Issue.record("Expected place_candidates array.")
+            return
+        }
+        #expect(candidates.count == 2)
+        #expect(candidates.first == JSONValue.object([
+            "place_type": .string("运动场所"),
+            "confidence": .double(0.86),
+            "distance_m": .double(32),
+            "source": .string("amap_typecode_name"),
+            "quality": .string("exact_or_good_mapping")
+        ]))
+
+        let traceText = outcome.steps.compactMap { $0.detail }.joined(separator: "\n")
+        let payloadText = String(describing: reading.values)
+        for forbidden in ["secret-amap-key", "https://restapi.amap.com", "秘密体育馆", "秘密餐厅", "address", "poi_id"] {
+            #expect(!traceText.contains(forbidden))
+            #expect(!payloadText.contains(forbidden))
+        }
     }
 
     @Test("shared location reader coalesces concurrent one-shot requests")

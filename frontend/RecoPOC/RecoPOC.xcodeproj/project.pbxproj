@@ -16,9 +16,10 @@
 /* Begin PBXFileReference section */
 		845E040F092F1A7012E01094 /* RecoPOCHostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoPOCHostApp.swift; sourceTree = "<group>"; };
 		D461AA14D56C1C8533897201 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		E483C8A520E92F5A34A4C7BA /* RecoPOCHost.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = RecoPOCHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E483C8A520E92F5A34A4C7BA /* RecoPOCHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RecoPOCHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E5A8B0D66A60D8BC87C21C09 /* RecoPOC */ = {isa = PBXFileReference; lastKnownFileType = folder; name = RecoPOC; path = .; sourceTree = SOURCE_ROOT; };
 		F2B5C442C58E0948FD9AC0DE /* HostConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostConfiguration.swift; sourceTree = "<group>"; };
+		F995F748D11BCCB08AEE58D1 /* RecoPOCHost.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = RecoPOCHost.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -33,9 +34,18 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		08875A56C5B039F924E8C1E6 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				F995F748D11BCCB08AEE58D1 /* RecoPOCHost.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
 		2E57EAE8BBE1C3CDBE50937B = {
 			isa = PBXGroup;
 			children = (
+				08875A56C5B039F924E8C1E6 /* Config */,
 				7AC0068D06274A8E364AC8BF /* Packages */,
 				56B2CDF9E4D6A35B41E29963 /* RecoPOCHost */,
 				719AF6C0F9F9CE66CAD2338E /* Products */,
@@ -162,6 +172,7 @@
 /* Begin XCBuildConfiguration section */
 		5608625BCA313DB11A9DAEFE /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = F995F748D11BCCB08AEE58D1 /* RecoPOCHost.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = RecoPOCHost.entitlements;
@@ -178,12 +189,17 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.recopoc.host;
 				RECO_BACKEND_BASE_URL = "https://www.zkjpoc.icu";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};
 		563AF33D0DA0E9AA0F950EDA /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = F995F748D11BCCB08AEE58D1 /* RecoPOCHost.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = RecoPOCHost.entitlements;
@@ -200,7 +216,11 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.recopoc.host;
 				RECO_BACKEND_BASE_URL = "https://www.zkjpoc.icu";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};

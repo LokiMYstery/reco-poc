@@ -1,0 +1,9 @@
+// Safe defaults for generated host builds.
+// Copy Secrets.example.xcconfig to Secrets.xcconfig for local device runs.
+
+RECO_AMAP_API_KEY =
+RECO_AMAP_POI_ENABLED = false
+RECO_AMAP_INPUT_COORDSYS = gps
+RECO_AMAP_POI_RADIUS_M = 500
+
+#include? "Secrets.xcconfig"

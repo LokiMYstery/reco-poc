@@ -8,10 +8,6 @@ import Network
 import CoreLocation
 #endif
 
-#if canImport(MapKit)
-import MapKit
-#endif
-
 #if os(iOS) && canImport(CoreMotion)
 import CoreMotion
 #endif
@@ -32,13 +28,65 @@ import AVFAudio
 import WeatherKit
 #endif
 
+public enum AmapInputCoordinateSystem: String, Codable, Equatable, Sendable {
+    case gps
+    case autonavi
+}
+
+public struct AmapPOIConfiguration: Codable, Equatable, Sendable {
+    public var apiKey: String
+    public var enabled: Bool
+    public var inputCoordinateSystem: AmapInputCoordinateSystem
+    public var radiusM: Double
+
+    public init(
+        apiKey: String = "",
+        enabled: Bool = false,
+        inputCoordinateSystem: AmapInputCoordinateSystem = .gps,
+        radiusM: Double = 500
+    ) {
+        self.apiKey = apiKey
+        self.enabled = enabled
+        self.inputCoordinateSystem = inputCoordinateSystem
+        self.radiusM = radiusM
+    }
+
+    public static let disabled = AmapPOIConfiguration()
+
+    var trimmedAPIKey: String {
+        apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var hasUsableAPIKey: Bool {
+        !trimmedAPIKey.isEmpty
+    }
+}
+
 public struct NativeSensorProviderCatalog {
-    public init() {}
+    private let amapConfiguration: AmapPOIConfiguration
+    private let amapClient: any AmapPOIClient
+
+    public init(amapConfiguration: AmapPOIConfiguration = .disabled) {
+        self.amapConfiguration = amapConfiguration
+        self.amapClient = LiveAmapPOIClient()
+    }
+
+    init(
+        amapConfiguration: AmapPOIConfiguration = .disabled,
+        amapClient: any AmapPOIClient
+    ) {
+        self.amapConfiguration = amapConfiguration
+        self.amapClient = amapClient
+    }
 
     public func makeProviders() -> [any RawSensorReadingProvider] {
         #if canImport(CoreLocation)
         let sharedLocationReader = SharedLocationReader()
-        let locationProvider = SystemLocationSnapshotProvider(locationReader: sharedLocationReader)
+        let locationProvider = SystemLocationSnapshotProvider(
+            locationReader: sharedLocationReader,
+            amapConfiguration: amapConfiguration,
+            amapClient: amapClient
+        )
         #if os(iOS) && canImport(WeatherKit)
         let weatherProvider = WeatherSensorProvider(locationReader: sharedLocationReader)
         #else
@@ -191,13 +239,23 @@ public protocol LocationSnapshotTracingProviding: LocationSnapshotProviding {
 public struct SystemLocationSnapshotProvider: LocationSnapshotProviding, LocationSnapshotTracingProviding {
     #if canImport(CoreLocation)
     private let locationReader: any LocationReading
+    private let amapConfiguration: AmapPOIConfiguration
+    private let amapClient: any AmapPOIClient
 
     public init() {
         self.locationReader = SharedLocationReader()
+        self.amapConfiguration = .disabled
+        self.amapClient = LiveAmapPOIClient()
     }
 
-    init(locationReader: any LocationReading = SharedLocationReader()) {
+    init(
+        locationReader: any LocationReading = SharedLocationReader(),
+        amapConfiguration: AmapPOIConfiguration = .disabled,
+        amapClient: any AmapPOIClient = LiveAmapPOIClient()
+    ) {
         self.locationReader = locationReader
+        self.amapConfiguration = amapConfiguration
+        self.amapClient = amapClient
     }
     #else
     public init() {}
@@ -226,23 +284,31 @@ public struct SystemLocationSnapshotProvider: LocationSnapshotProviding, Locatio
 
         switch locationReport.outcome {
         case .success(let location):
-            let (place, placeSteps) = await NativePlaceTypeMapper.derivePlaceWithTrace(for: location)
+            let (place, placeSteps) = await NativePlaceTypeMapper.derivePlaceWithTrace(
+                for: location,
+                configuration: amapConfiguration,
+                client: amapClient
+            )
             steps.append(contentsOf: placeSteps)
+            var locationValues: [String: JSONValue] = [
+                "latitude": .double(location.latitude),
+                "longitude": .double(location.longitude),
+                "location_accuracy_m": .double(max(0, location.horizontalAccuracy)),
+                "place_type": .string(place.placeType),
+                "place_type_confidence": .double(place.confidence),
+                "place_type_quality": .string(place.quality),
+                "place_source": .string(place.source),
+                "poi_lookup_available": .int(place.poiLookupAvailable ? 1 : 0),
+            ]
+            if !place.candidates.isEmpty {
+                locationValues["place_candidates"] = .array(place.candidates.map(\.jsonValue))
+            }
             return RawSensorProviderReadOutcome(
                 result: .reading(
                     RawSensorReading(
                         observedAt: location.timestamp,
                         freshnessWindow: 60,
-                        values: [
-                            "latitude": .double(location.latitude),
-                            "longitude": .double(location.longitude),
-                            "location_accuracy_m": .double(max(0, location.horizontalAccuracy)),
-                            "place_type": .string(place.placeType),
-                            "place_type_confidence": .double(place.confidence),
-                            "place_type_quality": .string(place.quality),
-                            "place_source": .string(place.source),
-                            "poi_lookup_available": .int(place.poiLookupAvailable ? 1 : 0),
-                        ]
+                        values: locationValues
                     )
                 ),
                 detail: "place_quality=\(place.quality);place_source=\(place.source);poi_lookup_available=\(place.poiLookupAvailable ? 1 : 0)",
@@ -1130,269 +1196,329 @@ struct NativeDerivedPlace: Equatable, Sendable {
     var quality: String
     var source: String
     var poiLookupAvailable: Bool
+    var candidates: [PlaceCandidate]
 }
 
-private struct NativePlaceProbeResult: Sendable {
-    var candidates: [NativePlaceCandidate]
-    var trace: SensorStepTrace
+struct AmapCoordinate: Equatable, Sendable {
+    var longitude: Double
+    var latitude: Double
 }
 
-struct NativePlaceCandidate: Equatable, Sendable {
-    var placeType: String
-    var confidence: Double
-    var source: String
-    var query: String?
-    var itemName: String?
-    var categoryRaw: String?
-    var distanceM: Double
-    var rank: Int
-    var evidence: String
-    var dedupeKey: String
+struct AmapRawPOI: Decodable, Equatable, Sendable {
+    var name: String?
+    var type: String?
+    var typecode: String?
+    var location: String?
+    var distance: String?
+
+    init(
+        name: String? = nil,
+        type: String? = nil,
+        typecode: String? = nil,
+        location: String? = nil,
+        distance: String? = nil
+    ) {
+        self.name = name
+        self.type = type
+        self.typecode = typecode
+        self.location = location
+        self.distance = distance
+    }
 }
 
-private struct NativePlaceDecision: Equatable, Sendable {
-    var place: NativeDerivedPlace
-    var runnerUp: NativePlaceCandidate?
-    var margin: Double
-    var candidateCount: Int
-    var reasonCode: String?
+enum AmapPOIClientError: Error, Equatable, Sendable {
+    case invalidURL
+    case httpStatus(Int)
+    case apiFailure(String)
+    case invalidCoordinateResponse
+    case decodingFailed(String)
+
+    var reasonCode: String {
+        switch self {
+        case .invalidURL:
+            return "amap_invalid_url"
+        case .httpStatus(let status):
+            return "amap_http_status_\(status)"
+        case .apiFailure:
+            return "amap_api_failure"
+        case .invalidCoordinateResponse:
+            return "amap_invalid_coordinate_response"
+        case .decodingFailed:
+            return "amap_decoding_failed"
+        }
+    }
+
+    var sanitizedDetail: String {
+        switch self {
+        case .invalidURL:
+            return "AMap request URL could not be constructed."
+        case .httpStatus(let status):
+            return "AMap request returned HTTP status \(status)."
+        case .apiFailure(let info):
+            return "AMap API returned failure: \(nativeDiagnosticValue(info))."
+        case .invalidCoordinateResponse:
+            return "AMap coordinate conversion response did not include a usable coordinate."
+        case .decodingFailed(let type):
+            return "AMap response decoding failed for \(nativeDiagnosticValue(type))."
+        }
+    }
+}
+
+protocol AmapPOIClient: Sendable {
+    func convertToAmapCoordinate(longitude: Double, latitude: Double, apiKey: String) async throws -> AmapCoordinate
+    func fetchAroundPOIs(longitude: Double, latitude: Double, radiusM: Double, apiKey: String) async throws -> [AmapRawPOI]
+}
+
+struct LiveAmapPOIClient: AmapPOIClient {
+    func convertToAmapCoordinate(longitude: Double, latitude: Double, apiKey: String) async throws -> AmapCoordinate {
+        var components = URLComponents(string: "https://restapi.amap.com/v3/assistant/coordinate/convert")
+        components?.queryItems = [
+            URLQueryItem(name: "key", value: apiKey),
+            URLQueryItem(name: "locations", value: "\(longitude),\(latitude)"),
+            URLQueryItem(name: "coordsys", value: "gps")
+        ]
+        guard let url = components?.url else { throw AmapPOIClientError.invalidURL }
+        let response: AmapCoordinateResponse = try await fetch(url)
+        guard response.status == "1" else {
+            throw AmapPOIClientError.apiFailure(response.info ?? response.infocode ?? "unknown")
+        }
+        guard let raw = response.locations?.split(separator: ";").first,
+              let coordinate = AmapCoordinate(rawLocation: String(raw))
+        else {
+            throw AmapPOIClientError.invalidCoordinateResponse
+        }
+        return coordinate
+    }
+
+    func fetchAroundPOIs(longitude: Double, latitude: Double, radiusM: Double, apiKey: String) async throws -> [AmapRawPOI] {
+        var components = URLComponents(string: "https://restapi.amap.com/v5/place/around")
+        components?.queryItems = [
+            URLQueryItem(name: "key", value: apiKey),
+            URLQueryItem(name: "location", value: "\(longitude),\(latitude)"),
+            URLQueryItem(name: "radius", value: "\(Int(radiusM.rounded()))"),
+            URLQueryItem(name: "sortrule", value: "distance"),
+            URLQueryItem(name: "page_size", value: "10"),
+            URLQueryItem(name: "show_fields", value: "business"),
+            URLQueryItem(name: "types", value: Self.poiTypeFilter)
+        ]
+        guard let url = components?.url else { throw AmapPOIClientError.invalidURL }
+        let response: AmapPlaceAroundResponse = try await fetch(url)
+        guard response.status == "1" else {
+            throw AmapPOIClientError.apiFailure(response.info ?? response.infocode ?? "unknown")
+        }
+        return response.pois ?? []
+    }
+
+    private func fetch<T: Decodable>(_ url: URL) async throws -> T {
+        let (data, response) = try await URLSession.shared.data(from: url)
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw AmapPOIClientError.httpStatus(http.statusCode)
+        }
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw AmapPOIClientError.decodingFailed(String(describing: T.self))
+        }
+    }
+
+    private static let poiTypeFilter = [
+        "050000",
+        "060000",
+        "080000",
+        "100000",
+        "110000",
+        "120000",
+        "140000",
+        "150000",
+        "170000"
+    ].joined(separator: "|")
+}
+
+struct FakeAmapPOIClient: AmapPOIClient {
+    var convertedCoordinate: Result<AmapCoordinate, AmapPOIClientError>?
+    var pois: Result<[AmapRawPOI], AmapPOIClientError>
+
+    init(
+        convertedCoordinate: Result<AmapCoordinate, AmapPOIClientError>? = nil,
+        pois: Result<[AmapRawPOI], AmapPOIClientError>
+    ) {
+        self.convertedCoordinate = convertedCoordinate
+        self.pois = pois
+    }
+
+    func convertToAmapCoordinate(longitude: Double, latitude: Double, apiKey: String) async throws -> AmapCoordinate {
+        _ = apiKey
+        switch convertedCoordinate {
+        case .success(let coordinate):
+            return coordinate
+        case .failure(let error):
+            throw error
+        case .none:
+            return AmapCoordinate(longitude: longitude, latitude: latitude)
+        }
+    }
+
+    func fetchAroundPOIs(longitude: Double, latitude: Double, radiusM: Double, apiKey: String) async throws -> [AmapRawPOI] {
+        _ = (longitude, latitude, radiusM, apiKey)
+        switch pois {
+        case .success(let pois):
+            return pois
+        case .failure(let error):
+            throw error
+        }
+    }
 }
 
 enum NativePlaceTypeMapper {
-    fileprivate static func derivePlace(for location: LocationSample) async -> NativeDerivedPlace {
-        await derivePlaceWithTrace(for: location).place
+    fileprivate static func derivePlace(
+        for location: LocationSample,
+        configuration: AmapPOIConfiguration = .disabled,
+        client: any AmapPOIClient = LiveAmapPOIClient()
+    ) async -> NativeDerivedPlace {
+        await derivePlaceWithTrace(for: location, configuration: configuration, client: client).place
     }
 
-    fileprivate static func derivePlaceWithTrace(for location: LocationSample) async -> (place: NativeDerivedPlace, steps: [SensorStepTrace]) {
-        #if canImport(MapKit)
-        if #available(iOS 14.0, macOS 11.0, *) {
-            async let reverseGeocodeProbe = reverseGeocodeProbe(for: location)
-            let queryProbes = await queryProbeBatch(for: location, radius: 500)
-            let probes = await [reverseGeocodeProbe] + queryProbes
-            let candidates = dedupeCandidates(probes.flatMap(\.candidates))
-            let decision = decide(candidates: candidates)
-            return (decision.place, probes.map(\.trace) + [decisionStep(for: decision)])
+    fileprivate static func derivePlaceWithTrace(
+        for location: LocationSample,
+        configuration: AmapPOIConfiguration = .disabled,
+        client: any AmapPOIClient = LiveAmapPOIClient()
+    ) async -> (place: NativeDerivedPlace, steps: [SensorStepTrace]) {
+        guard configuration.enabled else {
+            return unavailableResult(reasonCode: "amap_disabled", detail: "AMap POI lookup is disabled.")
         }
-        #endif
+        guard configuration.hasUsableAPIKey else {
+            return unavailableResult(reasonCode: "amap_key_missing", detail: "AMap POI lookup has no configured API key.")
+        }
+        guard location.horizontalAccuracy >= 0, location.horizontalAccuracy <= 1_000 else {
+            return unavailableResult(
+                reasonCode: "amap_location_accuracy_too_low",
+                detail: "location_accuracy_m=\(Int(max(0, location.horizontalAccuracy).rounded()))"
+            )
+        }
 
-        let fallback = fallbackPlace()
-        let now = Date()
-        return (
-            fallback,
-            [
+        var steps: [SensorStepTrace] = []
+        let coordinate: AmapCoordinate
+        switch configuration.inputCoordinateSystem {
+        case .autonavi:
+            coordinate = AmapCoordinate(longitude: location.longitude, latitude: location.latitude)
+            let now = Date()
+            steps.append(
                 SensorStepTrace(
-                    name: "place.ab_decision",
+                    name: "amap.coordinate_convert",
                     startedAt: now,
                     endedAt: now,
-                    availability: .unavailable,
-                    reasonCode: "mapkit_unsupported",
-                    detail: "MapKit POI lookup is not available in this build;chosen_source=\(fallback.source)"
+                    availability: .available,
+                    detail: "input_coordsys=autonavi;conversion=skipped"
                 )
-            ]
-        )
-    }
-
-    #if canImport(MapKit)
-    @MainActor
-    private static func queryProbeBatch(for location: LocationSample, radius: CLLocationDistance) async -> [NativePlaceProbeResult] {
-        async let restaurant = queryProbe(for: location, query: "餐厅", radius: radius)
-        async let coffee = queryProbe(for: location, query: "咖啡", radius: radius)
-        async let hotel = queryProbe(for: location, query: "酒店", radius: radius)
-        async let mall = queryProbe(for: location, query: "商场", radius: radius)
-        async let park = queryProbe(for: location, query: "公园", radius: radius)
-        async let library = queryProbe(for: location, query: "图书馆", radius: radius)
-        async let metro = queryProbe(for: location, query: "地铁站", radius: radius)
-        async let airport = queryProbe(for: location, query: "机场", radius: radius)
-        async let school = queryProbe(for: location, query: "学校", radius: radius)
-        async let institute = queryProbe(for: location, query: "研究院", radius: radius)
-        async let office = queryProbe(for: location, query: "写字楼", radius: radius)
-        return await [
-            restaurant,
-            coffee,
-            hotel,
-            mall,
-            park,
-            library,
-            metro,
-            airport,
-            school,
-            institute,
-            office
-        ].sorted { $0.trace.name < $1.trace.name }
-    }
-
-    @MainActor
-    private static func queryProbe(for location: LocationSample, query: String, radius: CLLocationDistance) async -> NativePlaceProbeResult {
-        let request = MKLocalSearch.Request()
-        request.naturalLanguageQuery = query
-        request.region = MKCoordinateRegion(
-            center: location.coordinate,
-            latitudinalMeters: radius * 2,
-            longitudinalMeters: radius * 2
-        )
-        request.resultTypes = .pointOfInterest
-        return await runMapKitSearch(
-            name: "mapkit.query_probe.\(query)",
-            search: MKLocalSearch(request: request),
-            location: location,
-            source: "mapkit_query_probe",
-            query: query,
-            requestDetail: "query=\(nativeDiagnosticValue(query));region_m=\(Int(radius * 2));result_types=point_of_interest;poi_filter=not_set"
-        )
-    }
-
-    @MainActor
-    private static func runMapKitSearch(
-        name: String,
-        search: MKLocalSearch,
-        location: LocationSample,
-        source: String,
-        query: String?,
-        requestDetail: String
-    ) async -> NativePlaceProbeResult {
-        let startedAt = Date()
-        let result = await withCheckedContinuation { (continuation: CheckedContinuation<Result<([NativePlaceCandidate], Int), NativeSensorFailure>, Never>) in
-            search.start { response, error in
-                if let error {
-                    let diagnostics = nativeNSErrorDiagnostics(prefix: "mapkit", error: error)
-                    continuation.resume(
-                        returning: .failure(
-                            NativeSensorFailure(
-                                reason: .missingSample,
-                                reasonCode: diagnostics.reasonCode,
-                                detail: "\(requestDetail);\(diagnostics.detail)"
-                            )
-                        )
+            )
+        case .gps:
+            let startedAt = Date()
+            do {
+                coordinate = try await client.convertToAmapCoordinate(
+                    longitude: location.longitude,
+                    latitude: location.latitude,
+                    apiKey: configuration.trimmedAPIKey
+                )
+                steps.append(
+                    SensorStepTrace(
+                        name: "amap.coordinate_convert",
+                        startedAt: startedAt,
+                        endedAt: Date(),
+                        availability: .available,
+                        detail: "input_coordsys=gps;conversion=amap"
                     )
-                } else if let response {
-                    let candidates = candidates(
-                        from: response,
-                        origin: location.clLocation,
-                        source: source,
-                        query: query,
-                        locationAccuracyM: location.horizontalAccuracy
+                )
+            } catch {
+                let diagnostics = amapDiagnostics(for: error)
+                steps.append(
+                    SensorStepTrace(
+                        name: "amap.coordinate_convert",
+                        startedAt: startedAt,
+                        endedAt: Date(),
+                        availability: .unavailable,
+                        reasonCode: diagnostics.reasonCode,
+                        detail: diagnostics.detail
                     )
-                    continuation.resume(returning: .success((candidates, response.mapItems.count)))
-                } else {
-                    continuation.resume(
-                        returning: .failure(
-                            NativeSensorFailure(
-                                reason: .missingSample,
-                                reasonCode: "mapkit_no_response",
-                                detail: "\(requestDetail);MapKit returned no POI response."
-                            )
-                        )
-                    )
-                }
+                )
+                let decision = unavailableDecision(reasonCode: diagnostics.reasonCode)
+                return (decision.place, steps + [decisionStep(for: decision)])
             }
         }
-        let endedAt = Date()
-        switch result {
-        case .success(let success):
-            let detail = [
-                requestDetail,
-                "result_count=\(success.1)",
-                "usable_count=\(success.0.count)",
-                "top_candidates=\(candidateTraceSummary(success.0))"
-            ].joined(separator: ";")
-            return NativePlaceProbeResult(
-                candidates: success.0,
-                trace: SensorStepTrace(
-                    name: name,
-                    startedAt: startedAt,
-                    endedAt: endedAt,
-                    availability: success.0.isEmpty ? .unavailable : .available,
-                    reasonCode: success.0.isEmpty ? "mapkit_no_usable_poi" : nil,
-                    detail: detail
-                )
+
+        let poiStartedAt = Date()
+        let rawPOIs: [AmapRawPOI]
+        do {
+            rawPOIs = try await client.fetchAroundPOIs(
+                longitude: coordinate.longitude,
+                latitude: coordinate.latitude,
+                radiusM: configuration.radiusM,
+                apiKey: configuration.trimmedAPIKey
             )
-        case .failure(let failure):
-            return NativePlaceProbeResult(
-                candidates: [],
-                trace: SensorStepTrace(
-                    name: name,
-                    startedAt: startedAt,
-                    endedAt: endedAt,
+        } catch {
+            let diagnostics = amapDiagnostics(for: error)
+            steps.append(
+                SensorStepTrace(
+                    name: "amap.place_around",
+                    startedAt: poiStartedAt,
+                    endedAt: Date(),
                     availability: .unavailable,
-                    reasonCode: failure.reasonCode,
-                    detail: failure.detail
+                    reasonCode: diagnostics.reasonCode,
+                    detail: diagnostics.detail
                 )
             )
+            let decision = unavailableDecision(reasonCode: diagnostics.reasonCode)
+            return (decision.place, steps + [decisionStep(for: decision)])
         }
-    }
 
-    private static func candidates(
-        from response: MKLocalSearch.Response,
-        origin: CLLocation,
-        source: String,
-        query: String?,
-        locationAccuracyM: Double
-    ) -> [NativePlaceCandidate] {
-        response.mapItems.enumerated().compactMap { index, item in
-            guard let itemLocation = item.placemark.location else { return nil }
-            let distance = itemLocation.distance(from: origin)
-            guard distance <= 1_000 else { return nil }
-            return candidate(
-                category: item.pointOfInterestCategory,
-                query: query,
-                itemName: item.name,
-                placemarkTitle: placemarkTitle(for: item.placemark),
-                distance: distance,
-                rank: index,
-                source: source,
-                locationAccuracyM: locationAccuracyM,
-                latitude: itemLocation.coordinate.latitude,
-                longitude: itemLocation.coordinate.longitude
+        let candidates = candidates(
+            from: rawPOIs,
+            origin: coordinate,
+            locationAccuracyM: max(0, location.horizontalAccuracy),
+            sampleAgeS: max(0, Date().timeIntervalSince(location.timestamp)),
+            maxDistanceM: min(max(configuration.radiusM, 0), 500)
+        )
+        steps.append(
+            SensorStepTrace(
+                name: "amap.place_around",
+                startedAt: poiStartedAt,
+                endedAt: Date(),
+                availability: candidates.isEmpty ? .unavailable : .available,
+                reasonCode: candidates.isEmpty ? "amap_no_usable_poi" : nil,
+                detail: [
+                    "radius_m=\(Int(configuration.radiusM.rounded()))",
+                    "result_count=\(rawPOIs.count)",
+                    "usable_count=\(candidates.count)",
+                    "top_candidates=\(candidateTraceSummary(candidates))"
+                ].joined(separator: ";")
             )
-        }
-        .sorted { lhs, rhs in
-            if lhs.confidence == rhs.confidence { return lhs.distanceM < rhs.distanceM }
-            return lhs.confidence > rhs.confidence
-        }
-    }
+        )
 
-    static func map(category: MKPointOfInterestCategory?, distance: CLLocationDistance, source: String = "mapkit_query_probe") -> NativeDerivedPlace {
-        let candidate = candidate(
-            category: category,
-            query: nil,
-            itemName: nil,
-            placemarkTitle: nil,
-            distance: distance,
-            rank: 0,
-            source: source,
-            locationAccuracyM: 0,
-            latitude: nil,
-            longitude: nil
-        )
-        return NativeDerivedPlace(
-            placeType: candidate.placeType,
-            confidence: candidate.confidence,
-            quality: quality(for: candidate.confidence),
-            source: candidate.source,
-            poiLookupAvailable: true
-        )
+        let decision = decide(candidates: candidates)
+        return (decision.place, steps + [decisionStep(for: decision)])
     }
 
     static func testCandidate(
-        category: MKPointOfInterestCategory?,
-        query: String?,
-        itemName: String?,
-        distance: CLLocationDistance,
+        typecode: String? = nil,
+        type: String? = nil,
+        name: String? = nil,
+        distance: Double,
         rank: Int = 0,
-        source: String = "mapkit_query_probe",
-        locationAccuracyM: Double = 0
+        locationAccuracyM: Double = 0,
+        sampleAgeS: TimeInterval = 0
     ) -> NativePlaceCandidate {
         candidate(
-            category: category,
-            query: query,
-            itemName: itemName,
-            placemarkTitle: nil,
+            poi: AmapRawPOI(
+                name: name,
+                type: type,
+                typecode: typecode,
+                location: nil,
+                distance: "\(distance)"
+            ),
             distance: distance,
             rank: rank,
-            source: source,
             locationAccuracyM: locationAccuracyM,
-            latitude: nil,
-            longitude: nil
+            sampleAgeS: sampleAgeS,
+            coordinate: nil
         )
     }
 
@@ -1400,148 +1526,36 @@ enum NativePlaceTypeMapper {
         decide(candidates: candidates).place
     }
 
-    private static func candidate(
-        category: MKPointOfInterestCategory?,
-        query: String?,
-        itemName: String?,
-        placemarkTitle: String?,
-        distance: CLLocationDistance,
-        rank: Int,
-        source: String,
+    private static func candidates(
+        from pois: [AmapRawPOI],
+        origin: AmapCoordinate,
         locationAccuracyM: Double,
-        latitude: Double?,
-        longitude: Double?
-    ) -> NativePlaceCandidate {
-        let itemText = [itemName, placemarkTitle]
-            .compactMap { $0?.lowercased() }
-            .joined(separator: " ")
-        let categoryPlaceType = category.flatMap(placeType(for:))
-        let textPlaceType = placeType(forText: itemText)
-        let queryPlaceType = placeType(forQuery: query)
-        let placeType = categoryPlaceType ?? textPlaceType ?? queryPlaceType ?? "户外"
-        let hasCategoryEvidence = categoryPlaceType != nil && categoryPlaceType != "户外"
-        let hasTextEvidence = textPlaceType != nil && textPlaceType != "户外"
-        let hasQueryEvidence = queryPlaceType != nil && queryPlaceType != "户外"
-        let queryMatchesCategory = categoryPlaceType != nil && queryPlaceType != nil && categoryPlaceType == queryPlaceType
-        let queryConflictsWithCategory = categoryPlaceType != nil && queryPlaceType != nil && categoryPlaceType != queryPlaceType
-
-        var confidence = baseConfidence(forDistance: distance)
-        if hasCategoryEvidence { confidence += 0.12 }
-        if queryMatchesCategory { confidence += 0.08 }
-        if hasTextEvidence { confidence += 0.06 }
-        if rank == 0 { confidence += 0.04 } else if rank <= 2 { confidence += 0.02 }
-        if queryConflictsWithCategory { confidence -= 0.10 }
-        if locationAccuracyM > 100 { confidence -= 0.20 } else if locationAccuracyM > 50 { confidence -= 0.10 }
-
-        let cap: Double
-        if distance > 1_000 {
-            cap = 0
-        } else if hasCategoryEvidence {
-            cap = 0.85
-        } else if hasTextEvidence {
-            cap = 0.60
-        } else if hasQueryEvidence {
-            cap = 0.45
-        } else {
-            cap = 0.15
-        }
-        confidence = min(max(confidence, 0), cap)
-
-        let roundedDistance = Int(distance.rounded())
-        let evidence = [
-            "query=\(nativeDiagnosticValue(query ?? "none"))",
-            "name=\(nativeDiagnosticValue(itemName ?? "none"))",
-            "category=\(nativeDiagnosticValue(categoryRawValue(category)))",
-            "distance_m=\(roundedDistance)",
-            "rank=\(rank)",
-            "category_match=\(queryMatchesCategory)",
-            "category_conflict=\(queryConflictsWithCategory)"
-        ].joined(separator: ",")
-        let dedupeKey = makeDedupeKey(itemName: itemName, latitude: latitude, longitude: longitude, placeType: placeType)
-        return NativePlaceCandidate(
-            placeType: placeType,
-            confidence: confidence,
-            source: source,
-            query: query,
-            itemName: itemName,
-            categoryRaw: categoryRawValue(category),
-            distanceM: distance,
-            rank: rank,
-            evidence: evidence,
-            dedupeKey: dedupeKey
+        sampleAgeS: TimeInterval,
+        maxDistanceM: Double
+    ) -> [NativePlaceCandidate] {
+        let maxDistanceM = max(0, min(maxDistanceM, 500))
+        return dedupeCandidates(
+            pois.enumerated().compactMap { index, poi in
+                let coordinate = poi.location.flatMap(AmapCoordinate.init(rawLocation:))
+                let distance = distanceM(for: poi, coordinate: coordinate, origin: origin)
+                guard distance.isFinite, distance <= maxDistanceM else { return nil }
+                return candidate(
+                    poi: poi,
+                    distance: distance,
+                    rank: index,
+                    locationAccuracyM: locationAccuracyM,
+                    sampleAgeS: sampleAgeS,
+                    coordinate: coordinate
+                )
+            }
+            .filter { $0.confidence > 0 }
         )
     }
 
-    private static func placeType(for category: MKPointOfInterestCategory) -> String? {
-        if category == .airport {
-            return "机场"
-        } else if category == .hotel {
-            return "酒店"
-        } else if category == .restaurant || category == .cafe || category == .bakery || category == .brewery || category == .foodMarket {
-            return "餐厅"
-        } else if category == .park || category == .nationalPark {
-            return "公园"
-        } else if category == .library {
-            return "图书馆"
-        } else if category == .store {
-            return "商场"
-        } else if category == .publicTransport {
-            return "在途"
-        } else if category == .beach || category == .marina {
-            return "海边"
-        } else if category == .school || category == .university {
-            return "写字楼"
-        }
-        return nil
-    }
-    #endif
-
-    private static func placeType(forQuery query: String?) -> String? {
-        guard let query else { return nil }
-        return placeType(forText: query)
-    }
-
-    private static func placeType(forText text: String) -> String? {
-        let haystack = text.lowercased()
-        if containsAny(haystack, ["机场", "airport"]) { return "机场" }
-        if containsAny(haystack, ["酒店", "宾馆", "hotel"]) { return "酒店" }
-        if containsAny(haystack, ["餐厅", "咖啡", "食堂", "饭店", "restaurant", "cafe"]) { return "餐厅" }
-        if containsAny(haystack, ["公园", "park"]) { return "公园" }
-        if containsAny(haystack, ["图书馆", "library"]) { return "图书馆" }
-        if containsAny(haystack, ["商场", "商城", "广场", "购物", "mall", "store"]) { return "商场" }
-        if containsAny(haystack, ["地铁", "车站", "火车站", "公交", "station", "transit"]) { return "在途" }
-        if containsAny(haystack, ["海边", "码头", "beach", "marina"]) { return "海边" }
-        if containsAny(haystack, ["学校", "大学", "学院", "研究院", "科技园", "园区", "大厦", "中心", "公司", "办公", "写字楼", "school", "university", "office"]) { return "写字楼" }
-        return nil
-    }
-
-    private static func containsAny(_ text: String, _ needles: [String]) -> Bool {
-        needles.contains { text.contains($0.lowercased()) }
-    }
-
-    private static func baseConfidence(forDistance distance: Double) -> Double {
-        if distance <= 50 { return 0.62 }
-        if distance <= 100 { return 0.55 }
-        if distance <= 200 { return 0.45 }
-        if distance <= 500 { return 0.32 }
-        if distance <= 1_000 { return 0.22 }
-        return 0
-    }
-
-    private static func quality(for confidence: Double) -> String {
-        confidence >= 0.65 ? "exact_or_good_mapping" : "noisy_mapping"
-    }
-
     private static func decide(candidates rawCandidates: [NativePlaceCandidate]) -> NativePlaceDecision {
-        let candidates = dedupeCandidates(rawCandidates).filter { $0.placeType != "户外" && $0.confidence > 0 }
+        let candidates = dedupeCandidates(rawCandidates).filter { $0.placeType != "任意" && $0.confidence > 0 }
         guard !candidates.isEmpty else {
-            return NativePlaceDecision(
-                place: fallbackPlace(),
-                runnerUp: nil,
-                margin: 0,
-                candidateCount: 0,
-                reasonCode: "place_fallback_outdoor"
-            )
+            return unavailableDecision(reasonCode: "amap_no_usable_poi")
         }
 
         let groups = Dictionary(grouping: candidates, by: \.placeType)
@@ -1553,17 +1567,16 @@ enum NativePlaceTypeMapper {
             let top = sorted[0]
             let second = sorted.dropFirst().first?.confidence ?? 0
             let third = sorted.dropFirst(2).first?.confidence ?? 0
-            let aggregate = min(0.85, top.confidence + 0.08 * second + 0.04 * third)
+            let aggregate = min(0.88, top.confidence + 0.08 * second + 0.04 * third)
             return NativePlaceCandidate(
                 placeType: placeType,
                 confidence: aggregate,
                 source: top.source,
-                query: top.query,
-                itemName: top.itemName,
-                categoryRaw: top.categoryRaw,
+                typecode: top.typecode,
                 distanceM: top.distanceM,
                 rank: top.rank,
-                evidence: "aggregate_count=\(sorted.count);top=[\(top.evidence)]",
+                quality: quality(for: aggregate),
+                evidence: "aggregate_count=\(sorted.count);top_typecode=\(top.typecode ?? "none")",
                 dedupeKey: top.dedupeKey
             )
         }
@@ -1573,13 +1586,7 @@ enum NativePlaceTypeMapper {
         }
 
         guard let winner = scored.first else {
-            return NativePlaceDecision(
-                place: fallbackPlace(),
-                runnerUp: nil,
-                margin: 0,
-                candidateCount: candidates.count,
-                reasonCode: "place_fallback_outdoor"
-            )
+            return unavailableDecision(reasonCode: "amap_no_usable_poi", candidateCount: candidates.count)
         }
 
         let runnerUp = scored.dropFirst().first
@@ -1590,35 +1597,30 @@ enum NativePlaceTypeMapper {
             finalConfidence = max(0, finalConfidence - 0.10)
         }
 
-        if margin < 0.05 && finalConfidence < 0.40 {
-            return NativePlaceDecision(
-                place: fallbackPlace(),
+        guard finalConfidence >= 0.35 else {
+            return unavailableDecision(
+                reasonCode: hasCloseRunnerUp ? "amap_ambiguous_low_confidence" : "amap_low_confidence",
                 runnerUp: runnerUp,
                 margin: margin,
-                candidateCount: candidates.count,
-                reasonCode: "place_ambiguous_low_confidence"
+                candidateCount: candidates.count
             )
         }
 
-        guard finalConfidence >= 0.40 else {
-            return NativePlaceDecision(
-                place: fallbackPlace(),
-                runnerUp: runnerUp,
-                margin: margin,
-                candidateCount: candidates.count,
-                reasonCode: "place_low_confidence"
-            )
-        }
-
-        let source = winner.source == "mapkit_query_probe" && winner.query != nil
-            ? "mapkit_query_probe:\(winner.query!)"
-            : winner.source
+        var publicCandidates = scored.prefix(3).map(\.placeCandidate)
+        publicCandidates[0] = PlaceCandidate(
+            placeType: winner.placeType,
+            confidence: finalConfidence,
+            distanceM: winner.distanceM,
+            source: winner.source,
+            quality: hasCloseRunnerUp ? "noisy_mapping" : quality(for: finalConfidence)
+        )
         let place = NativeDerivedPlace(
             placeType: winner.placeType,
             confidence: finalConfidence,
             quality: hasCloseRunnerUp ? "noisy_mapping" : quality(for: finalConfidence),
-            source: source,
-            poiLookupAvailable: true
+            source: winner.source,
+            poiLookupAvailable: true,
+            candidates: publicCandidates
         )
         return NativePlaceDecision(
             place: place,
@@ -1627,6 +1629,125 @@ enum NativePlaceTypeMapper {
             candidateCount: candidates.count,
             reasonCode: nil
         )
+    }
+
+    private static func candidate(
+        poi: AmapRawPOI,
+        distance: Double,
+        rank: Int,
+        locationAccuracyM: Double,
+        sampleAgeS: TimeInterval,
+        coordinate: AmapCoordinate?
+    ) -> NativePlaceCandidate {
+        let typeEvidence = placeTypeForTypecode(poi.typecode, typeText: poi.type, name: poi.name)
+        let text = [poi.name, poi.type].compactMap { $0 }.joined(separator: " ")
+        let namePlaceType = placeType(forText: poi.name ?? "")
+        let typeTextPlaceType = placeType(forText: poi.type ?? "")
+        let placeType = typeEvidence?.placeType ?? namePlaceType ?? typeTextPlaceType ?? "任意"
+
+        let hasTypecodeEvidence = typeEvidence != nil
+        let hasNameEvidence = namePlaceType != nil
+        let hasTypeTextEvidence = typeTextPlaceType != nil
+        let typecodeStrength = typeEvidence?.strength ?? .none
+        let typecodeIsCoarse = typecodeStrength == .coarse
+        let nameMatchesTypecode = hasTypecodeEvidence && namePlaceType == typeEvidence?.placeType
+        let nameRefinesCoarseTypecode = typecodeIsCoarse && hasNameEvidence && namePlaceType == placeType
+        let typeTextConflicts = hasTypecodeEvidence && hasTypeTextEvidence && typeTextPlaceType != typeEvidence?.placeType
+        let nameConflicts = hasTypecodeEvidence && hasNameEvidence && namePlaceType != typeEvidence?.placeType && !typecodeIsCoarse
+
+        var confidence = distanceScore(for: distance)
+        confidence += typecodeStrength.score
+        if nameMatchesTypecode {
+            confidence += 0.10
+        } else if nameRefinesCoarseTypecode {
+            confidence += 0.12
+        } else if hasNameEvidence && !hasTypecodeEvidence {
+            confidence += 0.10
+        }
+        if rank == 0 {
+            confidence += 0.04
+        } else if rank <= 2 {
+            confidence += 0.02
+        }
+        confidence -= accuracyPenalty(for: locationAccuracyM)
+        if nameConflicts { confidence -= 0.12 }
+        if typeTextConflicts { confidence -= 0.08 }
+        if sampleAgeS > 120 { confidence -= 0.20 }
+
+        let cap = candidateCap(
+            strength: typecodeStrength,
+            hasNameEvidence: hasNameEvidence,
+            hasTypeTextEvidence: hasTypeTextEvidence,
+            distance: distance
+        )
+        confidence = min(max(confidence, 0), cap)
+
+        let source: String
+        if hasTypecodeEvidence && (nameMatchesTypecode || nameRefinesCoarseTypecode || containsAny(text, [placeType])) {
+            source = "amap_typecode_name"
+        } else if hasTypecodeEvidence {
+            source = "amap_typecode"
+        } else {
+            source = "amap_name_keyword"
+        }
+
+        return NativePlaceCandidate(
+            placeType: placeType,
+            confidence: confidence,
+            source: source,
+            typecode: normalizedTypecode(poi.typecode),
+            distanceM: distance,
+            rank: rank,
+            quality: quality(for: confidence),
+            evidence: [
+                "typecode=\(normalizedTypecode(poi.typecode) ?? "none")",
+                "distance_m=\(Int(distance.rounded()))",
+                "rank=\(rank)",
+                "source=\(source)",
+                "name_conflict=\(nameConflicts)",
+                "type_text_conflict=\(typeTextConflicts)"
+            ].joined(separator: ","),
+            dedupeKey: makeDedupeKey(poi: poi, coordinate: coordinate, placeType: placeType)
+        )
+    }
+
+    private static func placeTypeForTypecode(_ rawTypecode: String?, typeText: String?, name: String?) -> TypecodeEvidence? {
+        guard let typecode = normalizedTypecode(rawTypecode) else { return nil }
+        let text = [typeText, name].compactMap { $0 }.joined(separator: " ")
+
+        if typecode.hasPrefix("050") { return TypecodeEvidence(placeType: "餐厅", strength: .strong) }
+        if typecode.hasPrefix("060") { return TypecodeEvidence(placeType: "商场", strength: .mediumStrong) }
+        if typecode.hasPrefix("100") { return TypecodeEvidence(placeType: "酒店", strength: .strong) }
+        if typecode.hasPrefix("0801") || (typecode.hasPrefix("080") && containsAny(text, sportsKeywords)) {
+            return TypecodeEvidence(placeType: "运动场所", strength: .strong)
+        }
+        if typecode.hasPrefix("1101") || (typecode.hasPrefix("110") && containsAny(text, ["公园", "景区", "绿地", "湿地"])) {
+            return TypecodeEvidence(placeType: "公园", strength: .mediumStrong)
+        }
+        if typecode.hasPrefix("1405") || (typecode.hasPrefix("140") && containsAny(text, ["图书馆", "书店", "阅览室"])) {
+            return TypecodeEvidence(placeType: "图书馆", strength: .strong)
+        }
+        if typecode.hasPrefix("140") && containsAny(text, officeKeywords) {
+            return TypecodeEvidence(placeType: "写字楼", strength: .mediumStrong)
+        }
+        if typecode.hasPrefix("150") && containsAny(text, ["机场", "航站楼", "候机楼"]) {
+            return TypecodeEvidence(placeType: "机场", strength: .strong)
+        }
+        if typecode.hasPrefix("150") && containsAny(text, ["地铁", "轨交"]) {
+            return TypecodeEvidence(placeType: "地铁站", strength: .strong)
+        }
+        if typecode.hasPrefix("150") && containsAny(text, ["高铁", "火车站", "铁路", "动车"]) {
+            return TypecodeEvidence(placeType: "高铁站", strength: .strong)
+        }
+        if typecode.hasPrefix("150") { return TypecodeEvidence(placeType: "在途", strength: .coarse) }
+        if typecode.hasPrefix("170") { return TypecodeEvidence(placeType: "写字楼", strength: .mediumStrong) }
+        if typecode.hasPrefix("120") {
+            if let textPlaceType = placeType(forText: text), textPlaceType == "写字楼" || textPlaceType == "住宅区" {
+                return TypecodeEvidence(placeType: textPlaceType, strength: .coarse)
+            }
+            return TypecodeEvidence(placeType: "住宅区", strength: .coarse)
+        }
+        return nil
     }
 
     private static func dedupeCandidates(_ candidates: [NativePlaceCandidate]) -> [NativePlaceCandidate] {
@@ -1646,138 +1767,153 @@ enum NativePlaceTypeMapper {
         }
     }
 
-    private static func makeDedupeKey(itemName: String?, latitude: Double?, longitude: Double?, placeType: String) -> String {
-        let normalizedName = (itemName ?? "unknown")
-            .lowercased()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let latitude, let longitude {
-            return "\(normalizedName):\((latitude * 10_000).rounded() / 10_000):\((longitude * 10_000).rounded() / 10_000)"
-        }
-        return "\(normalizedName):\(placeType)"
-    }
-
     private static func candidateTraceSummary(_ candidates: [NativePlaceCandidate]) -> String {
         let summary = candidates.prefix(3).map { candidate in
             [
                 candidate.placeType,
                 String(format: "%.2f", candidate.confidence),
                 "d=\(Int(candidate.distanceM.rounded()))",
-                "q=\(candidate.query ?? "none")",
-                "name=\(nativeDiagnosticValue(candidate.itemName ?? "none"))",
-                "cat=\(nativeDiagnosticValue(candidate.categoryRaw ?? "none"))"
+                "typecode=\(candidate.typecode ?? "none")",
+                "source=\(candidate.source)"
             ].joined(separator: ",")
         }.joined(separator: "|")
         return summary.isEmpty ? "none" : summary
     }
 
-    #if canImport(MapKit)
-    private static func placemarkTitle(for placemark: MKPlacemark) -> String? {
-        [placemark.name, placemark.title, placemark.thoroughfare, placemark.subThoroughfare, placemark.locality, placemark.subLocality]
-            .compactMap { $0 }
-            .joined(separator: " ")
+    private static func placeType(forText text: String) -> String? {
+        let haystack = text.lowercased()
+        if containsAny(haystack, sportsKeywords) { return "运动场所" }
+        if containsAny(haystack, ["机场", "airport", "航站楼", "候机楼"]) { return "机场" }
+        if containsAny(haystack, ["高铁", "火车站", "铁路", "动车"]) { return "高铁站" }
+        if containsAny(haystack, ["地铁", "轨交", "subway", "metro"]) { return "地铁站" }
+        if containsAny(haystack, residentialKeywords) { return "住宅区" }
+        if containsAny(haystack, officeKeywords) { return "写字楼" }
+        if containsAny(haystack, restaurantKeywords) { return "餐厅" }
+        if containsAny(haystack, mallKeywords) { return "商场" }
+        if containsAny(haystack, ["酒店", "宾馆", "旅馆", "公寓酒店", "hotel"]) { return "酒店" }
+        if containsAny(haystack, ["公园", "绿地", "湿地", "景区", "park"]) { return "公园" }
+        if containsAny(haystack, ["图书馆", "书店", "阅览室", "library"]) { return "图书馆" }
+        if containsAny(haystack, ["海边", "海滩", "沙滩", "码头", "滨海", "beach", "marina"]) { return "海边" }
+        if containsAny(haystack, ["公交", "车站", "station", "transit"]) { return "在途" }
+        return nil
     }
 
-    private static func categoryRawValue(_ category: MKPointOfInterestCategory?) -> String {
-        guard let category else { return "none" }
-        return category.rawValue
+    private static func containsAny(_ text: String, _ needles: [String]) -> Bool {
+        let haystack = text.lowercased()
+        return needles.contains { haystack.contains($0.lowercased()) }
     }
-    #endif
 
-    #if canImport(CoreLocation)
-    private static func reverseGeocodeProbe(for location: LocationSample) async -> NativePlaceProbeResult {
-        let startedAt = Date()
-        let result = await withCheckedContinuation { (continuation: CheckedContinuation<Result<String, NativeSensorFailure>, Never>) in
-            CLGeocoder().reverseGeocodeLocation(location.clLocation) { placemarks, error in
-                if let error {
-                    let diagnostics = nativeNSErrorDiagnostics(prefix: "clgeocoder", error: error)
-                    continuation.resume(
-                        returning: .failure(
-                            NativeSensorFailure(
-                                reason: .missingSample,
-                                reasonCode: diagnostics.reasonCode,
-                                detail: diagnostics.detail
-                            )
-                        )
-                    )
-                } else if let placemark = placemarks?.first {
-                    continuation.resume(returning: .success(reverseGeocodeSummary(for: placemark, count: placemarks?.count ?? 0)))
-                } else {
-                    continuation.resume(
-                        returning: .failure(
-                            NativeSensorFailure(
-                                reason: .missingSample,
-                                reasonCode: "clgeocoder_no_response",
-                                detail: "CoreLocation reverse geocoder returned no placemark."
-                            )
-                        )
-                    )
-                }
-            }
+    private static func distanceM(for poi: AmapRawPOI, coordinate: AmapCoordinate?, origin: AmapCoordinate) -> Double {
+        if let distance = doubleValue(poi.distance) {
+            return max(0, distance)
         }
-        let endedAt = Date()
-        switch result {
-        case .success(let detail):
-            return NativePlaceProbeResult(
-                candidates: [],
-                trace: SensorStepTrace(
-                    name: "clgeocoder.reverse_geocode",
-                    startedAt: startedAt,
-                    endedAt: endedAt,
-                    availability: .available,
-                    detail: detail
-                )
-            )
-        case .failure(let failure):
-            return NativePlaceProbeResult(
-                candidates: [],
-                trace: SensorStepTrace(
-                    name: "clgeocoder.reverse_geocode",
-                    startedAt: startedAt,
-                    endedAt: endedAt,
-                    availability: .unavailable,
-                    reasonCode: failure.reasonCode,
-                    detail: failure.detail
-                )
-            )
+        guard let coordinate else { return .infinity }
+        let originLocation = CLLocation(latitude: origin.latitude, longitude: origin.longitude)
+        let poiLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        return poiLocation.distance(from: originLocation)
+    }
+
+    private static func distanceScore(for distance: Double) -> Double {
+        if distance <= 50 { return 0.42 }
+        if distance <= 150 { return 0.34 }
+        if distance <= 300 { return 0.22 }
+        if distance <= 500 { return 0.12 }
+        return 0
+    }
+
+    private static func accuracyPenalty(for accuracy: Double) -> Double {
+        if accuracy <= 50 { return 0 }
+        if accuracy <= 100 { return 0.06 }
+        if accuracy <= 250 { return 0.14 }
+        return 0.24
+    }
+
+    private static func candidateCap(
+        strength: TypecodeStrength,
+        hasNameEvidence: Bool,
+        hasTypeTextEvidence: Bool,
+        distance: Double
+    ) -> Double {
+        switch strength {
+        case .strong:
+            return distance <= 150 ? 0.88 : 0.78
+        case .mediumStrong:
+            return 0.78
+        case .coarse:
+            return hasNameEvidence ? 0.78 : 0.62
+        case .none:
+            return hasNameEvidence ? 0.55 : (hasTypeTextEvidence ? 0.50 : 0)
         }
     }
 
-    private static func reverseGeocodeSummary(for placemark: CLPlacemark, count: Int) -> String {
-        var parts = ["placemark_count=\(count)"]
-        if let name = placemark.name, !name.isEmpty { parts.append("name=\(nativeDiagnosticValue(name))") }
-        if let locality = placemark.locality, !locality.isEmpty { parts.append("locality=\(nativeDiagnosticValue(locality))") }
-        if let subLocality = placemark.subLocality, !subLocality.isEmpty { parts.append("subLocality=\(nativeDiagnosticValue(subLocality))") }
-        if let inlandWater = placemark.inlandWater, !inlandWater.isEmpty { parts.append("inlandWater=\(nativeDiagnosticValue(inlandWater))") }
-        if let ocean = placemark.ocean, !ocean.isEmpty { parts.append("ocean=\(nativeDiagnosticValue(ocean))") }
-        if let areas = placemark.areasOfInterest, !areas.isEmpty {
-            parts.append("areasOfInterest=\(areas.prefix(5).map(nativeDiagnosticValue).joined(separator: ","))")
-        }
-        return parts.joined(separator: ";")
+    private static func quality(for confidence: Double) -> String {
+        confidence >= 0.70 ? "exact_or_good_mapping" : "noisy_mapping"
     }
-    #else
-    private static func reverseGeocodeProbe(for location: LocationSample) async -> NativePlaceProbeResult {
+
+    private static func normalizedTypecode(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let code = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return code.isEmpty ? nil : code
+    }
+
+    private static func doubleValue(_ raw: String?) -> Double? {
+        guard let raw else { return nil }
+        return Double(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private static func makeDedupeKey(poi: AmapRawPOI, coordinate: AmapCoordinate?, placeType: String) -> String {
+        let locationKey: String
+        if let coordinate {
+            locationKey = "\((coordinate.latitude * 10_000).rounded() / 10_000):\((coordinate.longitude * 10_000).rounded() / 10_000)"
+        } else {
+            locationKey = "no_location"
+        }
+        let nameKey = abs((poi.name ?? "unknown").hashValue)
+        return "\(locationKey):\(normalizedTypecode(poi.typecode) ?? "none"):\(placeType):\(nameKey)"
+    }
+
+    private static func unavailableResult(reasonCode: String, detail: String) -> (place: NativeDerivedPlace, steps: [SensorStepTrace]) {
         let now = Date()
-        return NativePlaceProbeResult(
-            candidates: [],
-            trace: SensorStepTrace(
-                name: "clgeocoder.reverse_geocode",
-                startedAt: now,
-                endedAt: now,
-                availability: .unavailable,
-                reasonCode: "clgeocoder_unsupported",
-                detail: "CoreLocation reverse geocoder is unavailable in this build."
-            )
+        let decision = unavailableDecision(reasonCode: reasonCode)
+        return (
+            decision.place,
+            [
+                SensorStepTrace(
+                    name: "amap.place_around",
+                    startedAt: now,
+                    endedAt: now,
+                    availability: .unavailable,
+                    reasonCode: reasonCode,
+                    detail: detail
+                ),
+                decisionStep(for: decision)
+            ]
         )
     }
-    #endif
+
+    private static func unavailableDecision(
+        reasonCode: String?,
+        runnerUp: NativePlaceCandidate? = nil,
+        margin: Double = 0,
+        candidateCount: Int = 0
+    ) -> NativePlaceDecision {
+        NativePlaceDecision(
+            place: fallbackPlace(),
+            runnerUp: runnerUp,
+            margin: margin,
+            candidateCount: candidateCount,
+            reasonCode: reasonCode
+        )
+    }
 
     private static func fallbackPlace() -> NativeDerivedPlace {
         NativeDerivedPlace(
-            placeType: "户外",
-            confidence: 0.15,
-            quality: "noisy_mapping",
-            source: "fallback_outdoor",
-            poiLookupAvailable: false
+            placeType: "任意",
+            confidence: 0,
+            quality: "unavailable",
+            source: "amap_unavailable",
+            poiLookupAvailable: false,
+            candidates: []
         )
     }
 
@@ -1791,7 +1927,7 @@ enum NativePlaceTypeMapper {
             runnerUpDetail = "runner_up=none"
         }
         return SensorStepTrace(
-            name: "place.query_probe_decision",
+            name: "amap.place_decision",
             startedAt: now,
             endedAt: now,
             availability: place.poiLookupAvailable ? .available : .unavailable,
@@ -1807,6 +1943,98 @@ enum NativePlaceTypeMapper {
                 runnerUpDetail
             ].joined(separator: ";")
         )
+    }
+
+    private static func amapDiagnostics(for error: Error) -> (reasonCode: String, detail: String) {
+        if let error = error as? AmapPOIClientError {
+            return (error.reasonCode, error.sanitizedDetail)
+        }
+        return ("amap_error", "AMap request failed with \(nativeDiagnosticValue(String(describing: type(of: error)))).")
+    }
+
+    private static let residentialKeywords = ["小区", "公寓", "家园", "花园", "住宅", "社区", "苑"]
+    private static let officeKeywords = ["大厦", "写字楼", "办公", "公司", "科技园", "产业园", "园区", "研究院", "中心", "总部", "学校", "大学", "学院", "office"]
+    private static let restaurantKeywords = ["餐厅", "饭店", "食堂", "咖啡", "茶饮", "火锅", "烧烤", "料理", "restaurant", "cafe"]
+    private static let mallKeywords = ["商场", "商城", "购物中心", "广场", "百货", "商业", "mall"]
+    private static let sportsKeywords = ["运动场所", "体育", "健身房", "健身", "体育馆", "球场", "运动场", "游泳馆", "瑜伽", "羽毛球", "篮球", "足球", "gym", "fitness", "stadium"]
+}
+
+struct NativePlaceCandidate: Equatable, Sendable {
+    var placeType: String
+    var confidence: Double
+    var source: String
+    var typecode: String?
+    var distanceM: Double
+    var rank: Int
+    var quality: String
+    var evidence: String
+    var dedupeKey: String
+
+    var placeCandidate: PlaceCandidate {
+        PlaceCandidate(
+            placeType: placeType,
+            confidence: confidence,
+            distanceM: distanceM,
+            source: source,
+            quality: quality
+        )
+    }
+}
+
+private struct NativePlaceDecision: Equatable, Sendable {
+    var place: NativeDerivedPlace
+    var runnerUp: NativePlaceCandidate?
+    var margin: Double
+    var candidateCount: Int
+    var reasonCode: String?
+}
+
+private struct TypecodeEvidence: Equatable, Sendable {
+    var placeType: String
+    var strength: TypecodeStrength
+}
+
+private enum TypecodeStrength: Equatable, Sendable {
+    case strong
+    case mediumStrong
+    case coarse
+    case none
+
+    var score: Double {
+        switch self {
+        case .strong: return 0.30
+        case .mediumStrong: return 0.24
+        case .coarse: return 0.14
+        case .none: return 0
+        }
+    }
+}
+
+private struct AmapCoordinateResponse: Decodable {
+    var status: String
+    var info: String?
+    var infocode: String?
+    var locations: String?
+}
+
+private struct AmapPlaceAroundResponse: Decodable {
+    var status: String
+    var info: String?
+    var infocode: String?
+    var pois: [AmapRawPOI]?
+}
+
+extension AmapCoordinate {
+    init?(rawLocation: String) {
+        let parts = rawLocation.split(separator: ",", maxSplits: 1).map(String.init)
+        guard parts.count == 2,
+              let longitude = Double(parts[0].trimmingCharacters(in: .whitespacesAndNewlines)),
+              let latitude = Double(parts[1].trimmingCharacters(in: .whitespacesAndNewlines))
+        else {
+            return nil
+        }
+        self.longitude = longitude
+        self.latitude = latitude
     }
 }
 #endif
