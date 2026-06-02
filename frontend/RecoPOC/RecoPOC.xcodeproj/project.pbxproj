@@ -178,6 +178,7 @@
 				CODE_SIGN_ENTITLEMENTS = RecoPOCHost.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = BYRP6L2B45;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Host/RecoPOCHost/Resources/Info.plist;
@@ -186,6 +187,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.recopoc.host;
 				RECO_BACKEND_BASE_URL = "https://www.zkjpoc.icu";
 				SDKROOT = iphoneos;
@@ -205,6 +207,7 @@
 				CODE_SIGN_ENTITLEMENTS = RecoPOCHost.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = BYRP6L2B45;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Host/RecoPOCHost/Resources/Info.plist;
@@ -213,6 +216,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.recopoc.host;
 				RECO_BACKEND_BASE_URL = "https://www.zkjpoc.icu";
 				SDKROOT = iphoneos;
