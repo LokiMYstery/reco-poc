@@ -118,6 +118,20 @@ uvicorn poc_api:app --host 0.0.0.0 --port 8000
     "timezone": "Asia/Shanghai",
     "hour": 8,
     "weekday": 1,
+    "place_candidates": [
+      {
+        "place_type": "在途",
+        "confidence": 0.72,
+        "distance_m": 35.0,
+        "source": "mapkit_category"
+      },
+      {
+        "place_type": "地铁站",
+        "confidence": 0.54,
+        "distance_m": 80.0,
+        "source": "poi_name_keyword"
+      }
+    ],
     "place_type": "在途",
     "place_type_available": 1,
     "place_type_confidence": 0.72,
@@ -133,13 +147,38 @@ uvicorn poc_api:app --host 0.0.0.0 --port 8000
 }
 ```
 
+推荐新版前端传 `place_candidates`，最多 3 项，按 confidence 降序排列。每项结构：
+
+```json
+{
+  "place_type": "运动场所",
+  "confidence": 0.68,
+  "distance_m": 35.0,
+  "source": "poi_name_keyword",
+  "quality": "exact_or_good_mapping"
+}
+```
+
+地点内部枚举为：
+
+```text
+任意、住宅区、商场、酒店、餐厅、公园、写字楼、机场、图书馆、海边、户外、在途、高铁站、地铁站、运动场所
+```
+
+兼容说明：
+
+- 旧版前端可以继续只传 `place_type`、`place_type_confidence` 和 `place_type_quality`。
+- 新版传 `place_candidates` 时，后端自动使用 Top-1 补齐旧字段。
+- 实时规则按 `1.0 / 0.45 / 0.20` 的排名权重软融合 Top-3。
+- Top-1 与 Top-2 的 confidence 差值 `< 0.12` 时，地点会标记为 `noisy_mapping`，不进入细粒度长期历史桶。
+
 返回示例：
 
 ```json
 {
   "request_id": "req_20260526_0001",
   "user_id": "u_001",
-  "model_version": "poc-2026-05-26",
+  "model_version": "poc-2026-06-02-place-candidates",
   "semantic_mode": "none",
   "weights": {
     "rule": 0.58,
