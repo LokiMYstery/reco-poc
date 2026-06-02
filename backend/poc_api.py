@@ -22,15 +22,12 @@ from scenes import SCENE_NAME_TO_ID, SCENES, SCENE_NAMES
 MODEL_VERSION = "poc-2026-06-02-place-candidates"
 
 
-class PlaceCandidatePayload(BaseModel):
-    place_type: str
+class PlaceCandidate(BaseModel):
+    place_type: str = Field(..., description="Internal place enum, e.g. 住宅区 or 运动场所")
     confidence: float = Field(..., ge=0.0, le=1.0)
     distance_m: Optional[float] = Field(None, ge=0.0)
-    source: Optional[str] = None
-    quality: Optional[str] = None
-
-    class Config:
-        extra = "allow"
+    source: Optional[str] = Field(None, description="Debug source, e.g. mapkit_category or poi_name_keyword")
+    quality: Optional[str] = Field(None, description="Optional candidate quality, e.g. exact_or_good_mapping or noisy_mapping")
 
 
 class ContextPayload(BaseModel):
@@ -42,10 +39,15 @@ class ContextPayload(BaseModel):
     time_slot: Optional[str] = None
 
     place_type: Optional[str] = None
-    place_candidates: Optional[List[PlaceCandidatePayload]] = None
     place_type_available: Optional[int] = None
     place_type_confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
     place_type_quality: Optional[str] = None
+    place_candidates: Optional[List[PlaceCandidate]] = Field(
+        None,
+        min_length=1,
+        max_length=3,
+        description="Optional confidence-descending Top-3 place candidates. Preferred over the legacy single place_type.",
+    )
     latitude: Optional[float] = Field(None, ge=-90.0, le=90.0)
     longitude: Optional[float] = Field(None, ge=-180.0, le=180.0)
     lat: Optional[float] = Field(None, ge=-90.0, le=90.0)
@@ -118,6 +120,7 @@ def _as_context_dict(context: ContextPayload) -> Dict[str, Any]:
     else:
         data = context.dict(exclude_none=True)
     data = dict(data)
+    _normalize_place_candidates(data)
 
     ts = data.get("timestamp")
     if ts and ("hour" not in data or "date" not in data or "weekday" not in data):
@@ -128,8 +131,6 @@ def _as_context_dict(context: ContextPayload) -> Dict[str, Any]:
             data.setdefault("weekday", dt.weekday())
         except ValueError:
             pass
-
-    _normalize_place_candidates(data)
 
     data.setdefault("hour", 12)
     data.setdefault("time_slot", _time_slot_from_hour(int(data["hour"])))
@@ -151,48 +152,29 @@ def _as_context_dict(context: ContextPayload) -> Dict[str, Any]:
 
 
 def _normalize_place_candidates(data: Dict[str, Any]) -> None:
-    candidates = data.get("place_candidates")
-    if not isinstance(candidates, list) or not candidates:
+    """Use structured Top-3 POI evidence while keeping old single-value fields."""
+    raw_candidates = data.get("place_candidates")
+    if not isinstance(raw_candidates, list) or not raw_candidates:
         return
 
-    normalized = []
-    for candidate in candidates[:3]:
-        if hasattr(candidate, "model_dump"):
-            item = candidate.model_dump(exclude_none=True)
-        elif hasattr(candidate, "dict"):
-            item = candidate.dict(exclude_none=True)
-        elif isinstance(candidate, dict):
-            item = dict(candidate)
-        else:
-            continue
+    candidates = sorted(raw_candidates[:3], key=lambda item: float(item.get("confidence") or 0.0), reverse=True)
+    data["place_candidates"] = candidates
+    top = candidates[0]
+    top_confidence = float(top.get("confidence") or 0.0)
+    runner_up_confidence = float(candidates[1].get("confidence") or 0.0) if len(candidates) > 1 else 0.0
+    margin = top_confidence - runner_up_confidence
+    ambiguous = len(candidates) > 1 and margin < 0.12
 
-        place_type = item.get("place_type")
-        if not place_type:
-            continue
-        try:
-            confidence = float(item.get("confidence", 0.0))
-        except (TypeError, ValueError):
-            confidence = 0.0
-        item["confidence"] = max(0.0, min(1.0, confidence))
-        normalized.append(item)
-
-    if not normalized:
-        return
-
-    data["place_candidates"] = normalized
-    top = normalized[0]
-    data.setdefault("place_type", top["place_type"])
-    data.setdefault("place_type_confidence", top["confidence"])
-    data.setdefault("place_type_available", 1)
-
-    if not data.get("place_type_quality"):
-        top_quality = top.get("quality")
-        if top_quality:
-            data["place_type_quality"] = top_quality
-        elif len(normalized) > 1 and abs(float(normalized[0]["confidence"]) - float(normalized[1]["confidence"])) < 0.12:
-            data["place_type_quality"] = "noisy_mapping"
-        else:
-            data["place_type_quality"] = "exact_or_good_mapping"
+    data["place_type"] = str(top.get("place_type") or "任意")
+    data["place_type_available"] = 1
+    data["place_type_confidence"] = top_confidence
+    data["place_candidates_margin"] = round(margin, 4)
+    if ambiguous:
+        data["place_type_quality"] = "noisy_mapping"
+    else:
+        data["place_type_quality"] = top.get("quality") or (
+            "exact_or_good_mapping" if top_confidence >= 0.55 else "noisy_mapping"
+        )
 
 
 def _time_slot_from_hour(hour: int) -> str:
