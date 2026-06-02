@@ -6,7 +6,7 @@
 - Scope: iOS / Swift 前端 PoC 使用高德 Web 服务和 CoreLocation 推导 `place_candidates` 与 `place_type_*`
 - Upstream SPEC: `docs/ios-frontend-poc-spec.md`
 - Backend contract: `docs/frontend-backend-payload-contract.md`
-- Status: planning SPEC; no backend contract change
+- Status: implementation-aligned SPEC; no backend contract change
 
 ## 1. 目标与输出
 
@@ -50,7 +50,7 @@
 | 高德坐标转换 | WGS84/CoreLocation -> 高德坐标，避免周边查询偏移 | 否 |
 | 高德逆地理编码 regeo | 获得 AOI、neighborhood、building、addressComponent、附近 POI | 否 |
 | 高德周边 POI around | 获得可排序、多类型候选 POI | 否 |
-| 高德 POI detail | 对 winner/runner-up 补充 children、business、indoor 等详情 | 否 |
+| 高德 POI detail（后续可选） | 对 winner/runner-up 补充 children、business、indoor 等详情；当前实现不额外发 detail 请求 | 否 |
 | 本地关键词/规则 | 将 provider 字段映射到内部 `place_type` | 否 |
 | 用户本地短时稳定性 | 同一地点连续结果去抖、提升稳定证据 | 否，第一版可只进入 trace |
 
@@ -65,7 +65,7 @@
 3. 坐标系统处理：
    - 默认 `RECO_AMAP_INPUT_COORDSYS=gps`：先调用高德坐标转换得到高德坐标。
    - 如果实测输入已是高德坐标，可配置为 `autonavi`，跳过转换。
-   - 当配置为 `gps` 时，around/regeo/detail 查询只能使用转换后的高德坐标；原始 CoreLocation 坐标只作为本地输入和后端 geo cluster 可选字段。
+   - 当配置为 `gps` 时，around/regeo（以及后续启用的 detail）查询只能使用转换后的高德坐标；原始 CoreLocation 坐标只作为本地输入和后端 geo cluster 可选字段。
    - trace 必须记录 `amap.coordinate_convert`，并区分 `input_coordsys=gps;conversion=amap` 与 `input_coordsys=autonavi;conversion=skipped`。
 
 ### 3.2 高德查询顺序
@@ -79,12 +79,12 @@
    - `roadlevel=1`
    - `homeorcorp=1` 作为住宅/宿舍倾向 probe；如果后续要比较办公倾向，可在调试模式额外跑 `homeorcorp=2`
 3. **周边 POI around**：`/v5/place/around`，使用高德坐标：
-   - 默认 `radius=300`；定位精度或 POI 稀疏时扩大到 `500`
+   - 默认 `radius=500`；配置可调小，但最大不超过 `500`
    - `sortrule=distance`
    - `page_size=25`，避免宿舍/校园大 AOI 被附近餐饮/校门/教学楼挤出 Top-10
    - `show_fields=business,children,indoor,navi`
    - `types` 不只用粗类；应覆盖住宅/商务住宅、住宿、餐饮、购物、体育、科教文化、交通、风景名胜、公司企业等
-4. **POI detail 可选补证**：仅对 Top winner 和 close runner-up 调用 detail，补充 children/subPOI、business、indoor/cpid 等字段。
+4. **POI detail 后续可选补证**：本轮不额外发 detail 请求；如果后续接入，仅对 Top winner 和 close runner-up 调用 detail，补充 children/subPOI、business、indoor/cpid 等字段。
 
 坐标转换失败时，不能用原始 GPS 坐标兜底调用高德 regeo/around；应输出 unavailable 或仅使用非高德地点信号，避免 GCJ-02 偏移导致错误 POI。
 
@@ -97,7 +97,7 @@
 | `name` | POI / AOI / building / neighborhood | 关键词、冲突判断、容器识别 | 否 |
 | `type` | POI / AOI / building / neighborhood | provider 类型辅助映射 | 否 |
 | `typecode` | POI | 主映射依据之一 | 否 |
-| `id` | POI | detail 查询和本地去重 | 否 |
+| `id` | POI | 后续 detail 查询和本地去重 | 否 |
 | `address` | POI / regeo | 本地调试，不进 payload | 否 |
 | `location` | POI | 距离计算 | 否 |
 | `distance` | POI / regeo POI / AOI | 候选打分 | 否 |
@@ -117,7 +117,7 @@ amap_regeo_poi
 amap_around_typecode
 amap_around_typecode_name
 amap_around_name_keyword
-amap_detail_children
+amap_detail_children  // reserved for optional future detail evidence
 amap_fused_evidence
 ```
 
@@ -125,7 +125,7 @@ amap_fused_evidence
 
 地点判定分两层：
 
-1. **Provider evidence**：每条 regeo/around/detail 证据先映射成内部 `place_type` 候选。
+1. **Provider evidence**：每条 regeo/around 证据先映射成内部 `place_type` 候选；detail 作为后续可选补证。
 2. **Fusion evidence**：按内部 `place_type` 聚合不同来源证据，输出 Top-3。
 
 每条证据建议保存以下本地结构：
@@ -136,7 +136,7 @@ confidence
 distance_m
 source
 quality
-provider_kind   // regeo_aoi, regeo_building, regeo_neighborhood, regeo_poi, around_poi, detail_child
+provider_kind   // regeo_aoi, regeo_building, regeo_neighborhood, regeo_poi, around_poi, detail_child(reserved)
 evidence_tags   // residential_keyword, campus_container, sports_keyword, typecode_strong...
 ```
 
@@ -162,7 +162,7 @@ evidence_tags   // residential_keyword, campus_container, sports_keyword, typeco
 | 商务住宅中明确住宅/小区/宿舍/公寓类 | `住宅区` | 中强；name/type/AOI 同向可高置信 |
 | 商务住宅粗类 | `住宅区` 或 `写字楼` | 粗类；必须结合 name/type/AOI/building |
 | 科教文化中图书馆 | `图书馆` | 强 |
-| 科教文化中学校/高等院校/科研机构 | 不直接映射成 `写字楼` | 作为 `campus_container` 弱证据；由 name/AOI/building/nearby POI 决定住宅、运动、图书馆、餐厅等细分 |
+| 科教文化中学校/高等院校/科研机构 | 弱 `写字楼` 容器候选 | 只作为 `campus_container` 弱证据，不输出高置信办公；由 name/AOI/building/nearby POI 的功能词决定住宅、运动、图书馆、餐厅等细分 |
 
 学校类 typecode 不直接给住宿或运动加分。正确处理方式：
 
@@ -170,7 +170,7 @@ evidence_tags   // residential_keyword, campus_container, sports_keyword, typeco
 - `学校 + 体育馆/操场/运动场/健身` -> `运动场所`
 - `学校 + 图书馆/书店/阅览室` -> `图书馆`
 - `学校 + 食堂/餐厅/咖啡` -> `餐厅`
-- 只有泛学校证据时，不输出高置信细类；可作为 `noisy_mapping` 或降低到 `任意`
+- 只有泛学校证据时，允许生成低置信 `写字楼` 容器候选，质量为 `noisy_mapping`；不能输出高置信 `写字楼`、`住宅区` 或 `运动场所`
 
 ## 7. name/type 关键词辅助
 
@@ -195,18 +195,18 @@ evidence_tags   // residential_keyword, campus_container, sports_keyword, typeco
 
 ### 7.2 容器词
 
-这些词不应单独映射成 `写字楼`：
+这些词不应单独映射成高置信 `写字楼`：
 
 ```text
 学校、大学、学院、校区、校园、研究院、园区、科技园、产业园、中心
 ```
 
-容器词只表达大范围环境。它们可以调整置信度和冲突判断，但不能覆盖更具体的功能词。例如：
+容器词只表达大范围环境。它们可以生成弱 `写字楼` 容器候选，用于避免远距离 around POI 抢占 Top-1，但不能覆盖更具体的功能词。例如：
 
 - `XX大学学生宿舍`：`宿舍` 是功能词，优先 `住宅区`；`大学` 只是容器词。
 - `XX大学体育馆`：`体育馆` 是功能词，优先 `运动场所`。
 - `XX大学图书馆`：`图书馆` 是功能词，优先 `图书馆`。
-- `XX大学`：只有容器词，不给高置信细分类。
+- `XX大学`：只有容器词，生成低置信 `写字楼` 容器候选，质量为 `noisy_mapping`。
 
 ## 8. regeo 证据优先级
 
@@ -224,11 +224,12 @@ evidence_tags   // residential_keyword, campus_container, sports_keyword, typeco
 
 regeo 规则：
 
-- AOI/name/type 命中校园容器时，先标记 `campus_container`，再等待 building/neighborhood/POI 细分。
+- AOI/name/type 命中校园容器时，先标记 `campus_container`。如果没有功能词细分，可生成弱 `写字楼` 结构候选；如果 building/neighborhood/POI 命中宿舍、食堂、体育馆、图书馆等功能词，则由功能词细分。
 - AOI/name/type 命中小区、住宅、宿舍、学生公寓、生活区时，可以直接形成 `住宅区` 候选。
 - building 命中宿舍/学生公寓/寝室/楼栋且处于校园 AOI 内时，`住宅区` 候选置信度上限可到 `0.82`。
 - neighborhood 命中住宅词时，`住宅区` 候选置信度上限可到 `0.86`。
 - 如果 AOI 是校园、around Top POI 是餐厅/教学楼，但 building/neighborhood 缺失，则不要强判住宅区。
+- 如果 AOI 是校园且 around POI 全在 `150m+`，弱 `写字楼` 结构候选可以保留为 Top-1，但质量必须是 `noisy_mapping`。
 
 ## 9. around POI 证据
 
@@ -236,7 +237,7 @@ around POI 继续提供附近候选，但不再作为唯一主链路。
 
 ### 9.1 查询策略
 
-1. 默认半径 `300m`；无候选或定位精度 `>100m` 时扩大到 `500m`。
+1. 默认半径 `500m`；配置可调小，但最大不超过 `500m`。
 2. `page_size=25`，减少宿舍/校园 POI 被 Top-10 截断的问题。
 3. 使用分组证据，而不是只看第一个 POI：
    - 同类候选数量
@@ -266,6 +267,17 @@ poi_confidence = clamp(
 
 `function_keyword_score` 替代旧 `name_score`：只有功能词加分，容器词不单独加分。
 
+`distance_score`：
+
+| 距离 | score |
+|---|---:|
+| `<=50m` | 0.42 |
+| `<=100m` | 0.34 |
+| `<=150m` | 0.26 |
+| `150m...300m` | 0.08 |
+| `300m...500m` | 0.04 |
+| `>500m` | 0.00 |
+
 | name/type 证据 | score |
 |---|---:|
 | 功能词与 typecode 同向 | 0.12 |
@@ -283,7 +295,18 @@ poi_confidence = clamp(
 | 中强 typecode 或粗 typecode + 功能词 | 0.78 |
 | 粗 typecode-only | 0.62 |
 | name-only 功能词 | 0.55 |
-| 只有容器词 | 0.35 |
+| around/typecode 只有容器词 | 0.35 |
+
+所有 around POI 和 regeo POI 还要叠加距离 cap：
+
+| 距离 | cap |
+|---|---:|
+| `<=150m` | 0.88 |
+| `150m...300m` | 0.42 |
+| `300m...500m` | 0.30 |
+| `>500m` | 0.00 |
+
+距离 cap 优先级高于 typecode 强度。也就是说，`150m+` 餐厅、体育馆等 POI 可以保留为 Top-3 解释候选，但不能仅凭强 typecode 覆盖 regeo 的结构证据。
 
 ## 10. 融合算法
 
@@ -307,6 +330,7 @@ type_score =
 - `stability_score` 第一版可只使用同一次采集内的一致性；后续再接短时本地缓存。
 - `conflict_penalty` 处理 close runner-up、多功能混合楼、定位精度差、样本过旧。
 - 最终 score clamp 到 `0...0.90`。
+- 不单独生成 fallback 候选；所有候选都来自同一套 evidence 映射与融合排序。
 
 Top-1 决策：
 
@@ -339,7 +363,7 @@ around: 食堂、教学楼、体育馆
 
 处理：
 
-- AOI 标记 `campus_container`，不直接判写字楼。
+- AOI 标记 `campus_container`，可生成弱 `写字楼` 容器候选，但不能覆盖宿舍功能词。
 - building 命中宿舍功能词，生成 `住宅区` 强候选。
 - 食堂/体育馆作为餐厅/运动场所候选保留在 Top-3，但不能覆盖宿舍楼证据。
 - 输出示例：`住宅区 0.78 exact_or_good_mapping`，runner-up `餐厅` 或 `运动场所`。
@@ -354,8 +378,9 @@ around: 教学楼、食堂、体育馆
 
 处理：
 
-- 只有校园容器，不输出高置信 `写字楼`。
-- 根据 around POI 输出 `餐厅`、`运动场所`、`图书馆` 等候选。
+- 只有校园容器时，输出低置信 `写字楼` 容器候选，质量为 `noisy_mapping`。
+- 根据 around POI 输出 `餐厅`、`运动场所`、`图书馆` 等候选；`150m+` 的 around POI 需要降权和距离 cap。
+- 如果校园 AOI 在点内，而 around 餐厅/运动场所都在 `150m+`，Top-1 可为弱 `写字楼`，Top-3 保留餐厅/运动场所解释。
 - 如果候选冲突接近，输出 `noisy_mapping`。
 
 ### 11.3 商场里的餐厅
@@ -373,13 +398,13 @@ around: 某餐厅 24m
 
 ### 11.4 科技园 / 产业园
 
-科技园、产业园、园区是容器词，不直接等于写字楼。
+科技园、产业园、园区是容器词，不直接等于高置信写字楼。
 
 处理：
 
 - 如果 building/POI 命中公司、办公楼、总部，输出 `写字楼`。
 - 如果命中公寓、宿舍、生活区，输出 `住宅区`。
-- 只有园区容器时，低置信或 `任意/noisy_mapping`。
+- 只有园区容器时，允许低置信 `写字楼` 容器候选，质量为 `noisy_mapping`。
 
 ## 12. 前端诊断面板
 
@@ -398,9 +423,10 @@ around: 某餐厅 24m
 - 默认配置为 `RECO_AMAP_INPUT_COORDSYS=gps` 时，必须先完成 GPS/CoreLocation -> 高德坐标转换，再调用 regeo/around；坐标转换失败不能直接用原始 GPS 坐标查高德。
 - 单元测试必须覆盖 `gps -> coordinate_convert -> around` 路径，并断言 trace 包含 `input_coordsys=gps;conversion=amap`。
 - `学生宿舍`、`学生公寓`、`宿舍楼`、`寝室`、`生活区` 等 name/type/building 命中时，候选应归 `住宅区`。
-- `学校`、`大学`、`学院`、`校区`、`校园` 只作为 campus/container 证据，不能单独输出高置信 `写字楼`、`住宅区` 或 `运动场所`。
+- `学校`、`大学`、`学院`、`校区`、`校园` 只作为 campus/container 证据，可生成弱 `写字楼` 容器候选，但不能单独输出高置信 `写字楼`、`住宅区` 或 `运动场所`。
 - 学校类 typecode 不直接给住宿或运动加分；必须由功能词、AOI/building/neighborhood、around POI 或 detail children 补证。
-- POI name-only 候选不能输出高置信；只有容器词时 cap 不超过 `0.35`。
+- POI name-only 候选不能输出高置信；around/typecode 只有容器词时 cap 不超过 `0.35`。
+- `150m+` around POI 必须降权并叠加距离 cap，不能仅凭强 typecode 覆盖 regeo 结构证据。
 - regeo AOI/building/neighborhood 与 around POI 冲突时，输出 Top-3 并降级 `place_type_quality=noisy_mapping`。
 - 默认上传 `place_candidates` Top-3；候选数量支持 `0...3`，没有固定 3 个的假设。
 - 兼容字段 `place_type`、`place_type_available`、`place_type_confidence`、`place_type_quality` 随 Top-1 一起输出。
