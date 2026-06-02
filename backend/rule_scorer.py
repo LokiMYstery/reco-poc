@@ -38,6 +38,8 @@ def _i(value: Any, default: int = 0) -> int:
 class RuleScorer:
     """对18个场景输出0-1规则分。"""
 
+    PLACE_CANDIDATE_RANK_WEIGHTS = (1.0, 0.45, 0.20)
+
     def __init__(self):
         self.scene_names = SCENE_NAMES
 
@@ -56,6 +58,47 @@ class RuleScorer:
         if quality == "noisy_mapping":
             confidence = min(confidence, 0.35)
         return max(0.0, min(0.85, confidence))
+
+    def _place_evidence(self, context: Dict[str, Any]):
+        candidates = context.get("place_candidates")
+        if isinstance(candidates, list) and candidates:
+            evidence = []
+            for rank, candidate in enumerate(candidates[:3]):
+                if not isinstance(candidate, dict):
+                    continue
+                place = _s(candidate.get("place_type"))
+                confidence = _f(candidate.get("confidence"))
+                if not place or confidence <= 0:
+                    continue
+                if _s(candidate.get("quality")) == "noisy_mapping":
+                    confidence = min(confidence, 0.35)
+                weight = min(0.85, confidence) * self.PLACE_CANDIDATE_RANK_WEIGHTS[rank]
+                evidence.append((place, weight))
+            if evidence:
+                return evidence
+        return [(_s(context.get("place_type")), self._place_weight(context))]
+
+    def _apply_place_signal(self, scores, place: str, place_w: float):
+        if place in {"图书馆"}:
+            self._add(scores, "图书馆", 0.30 * place_w)
+            self._add(scores, "阅读", 0.12 * place_w)
+            self._add(scores, "专注", 0.10 * place_w)
+        if place in {"写字楼"}:
+            self._add(scores, "专注", 0.22 * place_w)
+            self._add(scores, "睡午觉", 0.08 * place_w)
+        if place in {"住宅区", "酒店"}:
+            for scene in ["放松", "阅读", "深睡眠", "睡午觉", "游戏", "冥想"]:
+                self._add(scores, scene, 0.08 * place_w)
+        if place in {"在途", "地铁站", "高铁站", "机场"}:
+            self._add(scores, "通勤", 0.34 * place_w)
+        if place in {"公园", "户外", "海边"}:
+            self._add(scores, "跑步", 0.18 * place_w)
+            self._add(scores, "瑜伽", 0.10 * place_w)
+            self._add(scores, "宠物陪伴", 0.10 * place_w)
+        if place == "运动场所":
+            self._add(scores, "健身", 0.18 * place_w)
+            self._add(scores, "瑜伽", 0.08 * place_w)
+            self._add(scores, "跑步", 0.06 * place_w)
 
     def _add(self, scores, scene, amount):
         scores[scene] = min(1.0, scores[scene] + amount)
@@ -107,23 +150,9 @@ class RuleScorer:
             self._add(scores, "放松", 0.12)
             self._add(scores, "游戏", 0.10)
 
-        # 地点只按置信度给分，不做硬判断。
-        if place in {"图书馆"}:
-            self._add(scores, "图书馆", 0.30 * place_w)
-            self._add(scores, "阅读", 0.12 * place_w)
-            self._add(scores, "专注", 0.10 * place_w)
-        if place in {"写字楼"}:
-            self._add(scores, "专注", 0.22 * place_w)
-            self._add(scores, "睡午觉", 0.08 * place_w)
-        if place in {"住宅区", "酒店"}:
-            for scene in ["放松", "阅读", "深睡眠", "睡午觉", "游戏", "冥想"]:
-                self._add(scores, scene, 0.08 * place_w)
-        if place in {"在途", "地铁站", "高铁站", "机场"}:
-            self._add(scores, "通勤", 0.34 * place_w)
-        if place in {"公园", "户外", "海边"}:
-            self._add(scores, "跑步", 0.18 * place_w)
-            self._add(scores, "瑜伽", 0.10 * place_w)
-            self._add(scores, "宠物陪伴", 0.10 * place_w)
+        # 实时规则可以软融合 Top-3；地点始终只加分，不做硬判断。
+        for candidate_place, candidate_weight in self._place_evidence(context):
+            self._apply_place_signal(scores, candidate_place, candidate_weight)
 
         # 运动与步数：health权限缺失时，不扣分，只少加分。
         if activity_available:
@@ -301,7 +330,7 @@ class RuleScorer:
         if quietish and calm_hr and workout >= 15 and activity in {"静止", "慢速", "任意", ""} and (6 <= hour < 9 or 19 <= hour < 22):
             self._add(scores, "瑜伽", 0.22)
 
-        if quietish and activity in {"静止", "慢速", "任意", ""} and place in {"住宅区", "公园", "户外", "商场", ""} and (6 <= hour < 9 or 19 <= hour < 22):
+        if quietish and activity in {"静止", "慢速", "任意", ""} and place in {"住宅区", "公园", "户外", "商场", "运动场所", ""} and (6 <= hour < 9 or 19 <= hour < 22):
             self._add(scores, "瑜伽", 0.10)
 
         if initial_need:

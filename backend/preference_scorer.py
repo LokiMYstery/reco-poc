@@ -102,6 +102,7 @@ class PreferenceScorer:
             "商场": 3, "酒店": 4, "餐厅": 5,
             "公园": 6, "户外": 6, "海边": 6, "outdoor": 6,
             "在途": 7, "地铁站": 7, "高铁站": 7, "机场": 7, "car": 7,
+            "运动场所": 9,
         }
         return mapping.get(str(location), 8)
 
