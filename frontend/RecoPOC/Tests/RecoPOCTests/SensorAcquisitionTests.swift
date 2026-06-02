@@ -190,7 +190,7 @@ struct SensorAcquisitionTests {
         let office = NativePlaceTypeMapper.testCandidate(typecode: "170000", type: "公司企业", name: "测试科技公司", distance: 60)
 
         #expect(restaurant.placeType == "餐厅")
-        #expect(restaurant.source == "amap_typecode_name")
+        #expect(restaurant.source == "amap_around_typecode_name")
         #expect(sports.placeType == "运动场所")
         #expect(sports.confidence >= 0.70)
         #expect(office.placeType == "写字楼")
@@ -199,16 +199,46 @@ struct SensorAcquisitionTests {
     @Test("AMap name-only candidates are capped and still mapped when typecode is absent")
     func amapPlaceMapperNameOnlyCap() async throws {
         let candidate = NativePlaceTypeMapper.testCandidate(
-            name: "中国科学院上海高等研究院",
+            name: "测试办公楼",
             distance: 40
         )
         let place = NativePlaceTypeMapper.testDecision(candidates: [candidate])
 
         #expect(candidate.placeType == "写字楼")
-        #expect(candidate.source == "amap_name_keyword")
+        #expect(candidate.source == "amap_around_name_keyword")
         #expect(candidate.confidence <= 0.55)
         #expect(place.placeType == "写字楼")
         #expect(place.quality == "noisy_mapping")
+    }
+
+    @Test("AMap campus containers only produce weak office evidence without function evidence")
+    func amapCampusContainerOnlyProducesWeakOfficeEvidence() async throws {
+        let container = NativePlaceTypeMapper.testCandidate(
+            typecode: "141201",
+            type: "科教文化服务;学校;高等院校",
+            name: "测试大学",
+            distance: 20
+        )
+        let dorm = NativePlaceTypeMapper.testCandidate(
+            typecode: "141201",
+            type: "科教文化服务;学校;高等院校",
+            name: "测试大学学生宿舍",
+            distance: 20
+        )
+        let sports = NativePlaceTypeMapper.testCandidate(
+            typecode: "141201",
+            type: "科教文化服务;学校;高等院校",
+            name: "测试大学体育馆",
+            distance: 20
+        )
+        let containerPlace = NativePlaceTypeMapper.testDecision(candidates: [container])
+
+        #expect(container.placeType == "写字楼")
+        #expect(container.confidence <= 0.35)
+        #expect(containerPlace.placeType == "写字楼")
+        #expect(containerPlace.quality == "noisy_mapping")
+        #expect(dorm.placeType == "住宅区")
+        #expect(sports.placeType == "运动场所")
     }
 
     @Test("AMap mapper downgrades conflicting name and typecode evidence")
@@ -245,7 +275,7 @@ struct SensorAcquisitionTests {
         #expect(place.candidates.count == 3)
         #expect(place.candidates[0].placeType == "餐厅")
         #expect(place.candidates.allSatisfy { candidate in
-            ["amap_typecode", "amap_typecode_name", "amap_name_keyword"].contains(candidate.source)
+            ["amap_around_typecode", "amap_around_typecode_name", "amap_around_name_keyword"].contains(candidate.source)
         })
     }
 
@@ -521,6 +551,12 @@ struct SensorAcquisitionTests {
                 timestamp: startedAt
             )
         )
+        let fakeClient = FakeAmapPOIClient(
+            pois: .success([
+                AmapRawPOI(name: "秘密体育馆", type: "体育休闲服务;运动场馆", typecode: "080100", location: "121.4738,31.2305", distance: "32"),
+                AmapRawPOI(name: "秘密餐厅", type: "餐饮服务", typecode: "050100", location: "121.4739,31.2306", distance: "220"),
+            ])
+        )
         let provider = SystemLocationSnapshotProvider(
             locationReader: StubLocationReader(report: LocationReadReport(outcome: .success(location))),
             amapConfiguration: AmapPOIConfiguration(
@@ -528,12 +564,7 @@ struct SensorAcquisitionTests {
                 enabled: true,
                 inputCoordinateSystem: .autonavi
             ),
-            amapClient: FakeAmapPOIClient(
-                pois: .success([
-                    AmapRawPOI(name: "秘密体育馆", type: "体育休闲服务;运动场馆", typecode: "080100", location: "121.4738,31.2305", distance: "32"),
-                    AmapRawPOI(name: "秘密餐厅", type: "餐饮服务", typecode: "050100", location: "121.4739,31.2306", distance: "220"),
-                ])
-            )
+            amapClient: fakeClient
         )
 
         let outcome = await provider.readLocationSnapshotWithTrace()
@@ -543,7 +574,7 @@ struct SensorAcquisitionTests {
         }
 
         #expect(reading.values["place_type"] == JSONValue.string("运动场所"))
-        #expect(reading.values["place_source"] == JSONValue.string("amap_typecode_name"))
+        #expect(reading.values["place_source"] == JSONValue.string("amap_around_typecode_name"))
         #expect(reading.values["poi_lookup_available"] == JSONValue.int(1))
         let candidateValue: JSONValue? = reading.values["place_candidates"]
         guard case .array(let candidates)? = candidateValue else {
@@ -555,7 +586,7 @@ struct SensorAcquisitionTests {
             "place_type": .string("运动场所"),
             "confidence": .double(0.86),
             "distance_m": .double(32),
-            "source": .string("amap_typecode_name"),
+            "source": .string("amap_around_typecode_name"),
             "quality": .string("exact_or_good_mapping")
         ]))
 
@@ -564,6 +595,263 @@ struct SensorAcquisitionTests {
         for forbidden in ["secret-amap-key", "https://restapi.amap.com", "秘密体育馆", "秘密餐厅", "address", "poi_id"] {
             #expect(!traceText.contains(forbidden))
             #expect(!payloadText.contains(forbidden))
+        }
+        #expect(traceText.contains("page_size=25"))
+        #expect(traceText.contains("show_fields=business,children,indoor,navi"))
+        #expect(traceText.contains("extensions=all"))
+        #expect(fakeClient.regeoRequests.count == 1)
+        #expect(fakeClient.aroundRequests.count == 1)
+    }
+
+    @Test("AMap GPS input is converted before nearby POI lookup")
+    func amapLocationProviderConvertsGPSInputBeforeLookup() async throws {
+        let startedAt = Date()
+        let rawGPSLocation = LocationSample(
+            CLLocation(
+                coordinate: CLLocationCoordinate2D(latitude: 31.2304, longitude: 121.4737),
+                altitude: 0,
+                horizontalAccuracy: 35,
+                verticalAccuracy: -1,
+                timestamp: startedAt
+            )
+        )
+        let converted = AmapCoordinate(longitude: 121.5000, latitude: 31.2600)
+        let fakeClient = FakeAmapPOIClient(
+            convertedCoordinate: .success(converted),
+            pois: .success([
+                AmapRawPOI(
+                    name: "转换后餐厅",
+                    type: "餐饮服务",
+                    typecode: "050100",
+                    location: "121.5000,31.2600"
+                )
+            ])
+        )
+        let provider = SystemLocationSnapshotProvider(
+            locationReader: StubLocationReader(report: LocationReadReport(outcome: .success(rawGPSLocation))),
+            amapConfiguration: AmapPOIConfiguration(
+                apiKey: "secret-amap-key",
+                enabled: true,
+                inputCoordinateSystem: .gps
+            ),
+            amapClient: fakeClient
+        )
+
+        let outcome = await provider.readLocationSnapshotWithTrace()
+        guard case .reading(let reading) = outcome.result else {
+            Issue.record("Expected captured location reading after GPS coordinate conversion.")
+            return
+        }
+
+        #expect(reading.values["place_type"] == JSONValue.string("餐厅"))
+        #expect(reading.values["poi_lookup_available"] == JSONValue.int(1))
+        let traceText = outcome.steps.compactMap { $0.detail }.joined(separator: "\n")
+        #expect(traceText.contains("input_coordsys=gps;conversion=amap"))
+        #expect(fakeClient.coordinateConvertRequests == [
+            FakeAmapPOIClient.CoordinateConvertRequest(longitude: 121.4737, latitude: 31.2304)
+        ])
+        #expect(fakeClient.regeoRequests == [
+            FakeAmapPOIClient.RegeoRequest(longitude: converted.longitude, latitude: converted.latitude, radiusM: 200)
+        ])
+        #expect(fakeClient.aroundRequests == [
+            FakeAmapPOIClient.AroundRequest(longitude: converted.longitude, latitude: converted.latitude, radiusM: 500)
+        ])
+    }
+
+    @Test("AMap campus AOI beats distant around POIs")
+    func amapCampusAOIBeatsDistantAroundPOIs() async throws {
+        let startedAt = Date()
+        let location = LocationSample(
+            CLLocation(
+                coordinate: CLLocationCoordinate2D(latitude: 31.2304, longitude: 121.4737),
+                altitude: 0,
+                horizontalAccuracy: 20,
+                verticalAccuracy: -1,
+                timestamp: startedAt
+            )
+        )
+        let fakeClient = FakeAmapPOIClient(
+            regeo: .success(
+                AmapRegeo(
+                    aois: [
+                        AmapRegeoAOI(name: "测试大学", type: "科教文化服务;学校", distance: "0")
+                    ]
+                )
+            ),
+            pois: .success([
+                AmapRawPOI(name: "测试餐厅 A", type: "餐饮服务", typecode: "050300", distance: "153"),
+                AmapRawPOI(name: "测试餐厅 B", type: "餐饮服务", typecode: "050100", distance: "171"),
+                AmapRawPOI(name: "测试餐厅 C", type: "餐饮服务", typecode: "050500", distance: "189"),
+                AmapRawPOI(name: "测试体育馆", type: "体育休闲服务;运动场馆", typecode: "080100", distance: "282"),
+            ])
+        )
+        let provider = SystemLocationSnapshotProvider(
+            locationReader: StubLocationReader(report: LocationReadReport(outcome: .success(location))),
+            amapConfiguration: AmapPOIConfiguration(
+                apiKey: "secret-amap-key",
+                enabled: true,
+                inputCoordinateSystem: .autonavi
+            ),
+            amapClient: fakeClient
+        )
+
+        let outcome = await provider.readLocationSnapshotWithTrace()
+        guard case .reading(let reading) = outcome.result else {
+            Issue.record("Expected captured location reading.")
+            return
+        }
+
+        #expect(reading.values["place_type"] == JSONValue.string("写字楼"))
+        #expect(reading.values["place_type_quality"] == JSONValue.string("noisy_mapping"))
+        guard case .array(let candidates)? = reading.values["place_candidates"] else {
+            Issue.record("Expected place_candidates array.")
+            return
+        }
+        let candidatePlaceTypes = candidates.compactMap { candidate -> String? in
+            if case .object(let object) = candidate { return object["place_type"]?.stringValue }
+            return nil
+        }
+        #expect(candidatePlaceTypes.first == "写字楼")
+        #expect(candidatePlaceTypes.contains("餐厅"))
+
+        let traceText = outcome.steps.compactMap { $0.detail }.joined(separator: "\n")
+        #expect(traceText.contains("campus_container=1"))
+        #expect(traceText.contains("fusion_winner=写字楼"))
+    }
+
+    @Test("AMap regeo dorm building wins over campus around POIs")
+    func amapRegeoDormBuildingWinsOverCampusAroundPOIs() async throws {
+        let startedAt = Date()
+        let location = LocationSample(
+            CLLocation(
+                coordinate: CLLocationCoordinate2D(latitude: 31.2304, longitude: 121.4737),
+                altitude: 0,
+                horizontalAccuracy: 30,
+                verticalAccuracy: -1,
+                timestamp: startedAt
+            )
+        )
+        let fakeClient = FakeAmapPOIClient(
+            regeo: .success(
+                AmapRegeo(
+                    addressComponent: AmapAddressComponent(
+                        building: AmapNamedArea(name: "秘密大学学生宿舍", type: "建筑物")
+                    ),
+                    pois: [
+                        AmapRawPOI(name: "秘密大学图书馆", type: "科教文化服务;图书馆", typecode: "140500", distance: "80")
+                    ],
+                    aois: [
+                        AmapRegeoAOI(id: "secret-aoi-id", name: "秘密大学", type: "科教文化服务;学校", distance: "0")
+                    ]
+                )
+            ),
+            pois: .success([
+                AmapRawPOI(name: "秘密大学食堂", type: "餐饮服务", typecode: "050100", distance: "28"),
+                AmapRawPOI(name: "秘密大学体育馆", type: "体育休闲服务;运动场馆", typecode: "080100", distance: "35"),
+            ])
+        )
+        let provider = SystemLocationSnapshotProvider(
+            locationReader: StubLocationReader(report: LocationReadReport(outcome: .success(location))),
+            amapConfiguration: AmapPOIConfiguration(
+                apiKey: "secret-amap-key",
+                enabled: true,
+                inputCoordinateSystem: .autonavi
+            ),
+            amapClient: fakeClient
+        )
+
+        let outcome = await provider.readLocationSnapshotWithTrace()
+        guard case .reading(let reading) = outcome.result else {
+            Issue.record("Expected captured location reading.")
+            return
+        }
+
+        #expect(reading.values["place_type"] == JSONValue.string("住宅区"))
+        #expect(reading.values["place_source"] == JSONValue.string("amap_regeo_building"))
+        guard case .array(let candidates)? = reading.values["place_candidates"] else {
+            Issue.record("Expected place_candidates array.")
+            return
+        }
+        let candidatePlaceTypes = candidates.compactMap { candidate -> String? in
+            if case .object(let object) = candidate { return object["place_type"]?.stringValue }
+            return nil
+        }
+        #expect(candidates.count == 3)
+        #expect(candidatePlaceTypes.first == "住宅区")
+        #expect(candidatePlaceTypes.contains("餐厅"))
+        #expect(candidatePlaceTypes.contains("运动场所"))
+
+        let traceText = outcome.steps.compactMap { $0.detail }.joined(separator: "\n")
+        let payloadText = String(describing: reading.values)
+        #expect(traceText.contains("campus_container=1"))
+        #expect(traceText.contains("building_present=1"))
+        for forbidden in ["secret-amap-key", "秘密大学", "秘密大学学生宿舍", "秘密大学食堂", "秘密大学体育馆", "secret-aoi-id"] {
+            #expect(!traceText.contains(forbidden))
+            #expect(!payloadText.contains(forbidden))
+        }
+    }
+
+    @Test("AMap regeo neighborhood keeps residential ahead of nearby restaurants")
+    func amapRegeoNeighborhoodBeatsNearbyRestaurants() async throws {
+        let startedAt = Date()
+        let location = LocationSample(
+            CLLocation(
+                coordinate: CLLocationCoordinate2D(latitude: 31.2304, longitude: 121.4737),
+                altitude: 0,
+                horizontalAccuracy: 35,
+                verticalAccuracy: -1,
+                timestamp: startedAt
+            )
+        )
+        let fakeClient = FakeAmapPOIClient(
+            regeo: .success(
+                AmapRegeo(
+                    addressComponent: AmapAddressComponent(
+                        neighborhood: AmapNamedArea(name: "秘密花园小区", type: "商务住宅;住宅区")
+                    )
+                )
+            ),
+            pois: .success([
+                AmapRawPOI(name: "秘密餐厅 A", type: "餐饮服务", typecode: "050100", distance: "25"),
+                AmapRawPOI(name: "秘密餐厅 B", type: "餐饮服务", typecode: "050100", distance: "45"),
+            ])
+        )
+        let provider = SystemLocationSnapshotProvider(
+            locationReader: StubLocationReader(report: LocationReadReport(outcome: .success(location))),
+            amapConfiguration: AmapPOIConfiguration(
+                apiKey: "secret-amap-key",
+                enabled: true,
+                inputCoordinateSystem: .autonavi
+            ),
+            amapClient: fakeClient
+        )
+
+        let outcome = await provider.readLocationSnapshotWithTrace()
+        guard case .reading(let reading) = outcome.result else {
+            Issue.record("Expected captured location reading.")
+            return
+        }
+
+        #expect(reading.values["place_type"] == JSONValue.string("住宅区"))
+        #expect(reading.values["place_type_quality"] == JSONValue.string("noisy_mapping"))
+        guard case .array(let candidates)? = reading.values["place_candidates"] else {
+            Issue.record("Expected place_candidates array.")
+            return
+        }
+        let candidatePlaceTypes = candidates.compactMap { candidate -> String? in
+            if case .object(let object) = candidate { return object["place_type"]?.stringValue }
+            return nil
+        }
+        #expect(candidates.count == 2)
+        #expect(candidatePlaceTypes.first == "住宅区")
+        #expect(candidatePlaceTypes.contains("餐厅"))
+
+        let traceText = outcome.steps.compactMap { $0.detail }.joined(separator: "\n")
+        #expect(traceText.contains("neighborhood_present=1"))
+        #expect(traceText.contains("fusion_winner=住宅区"))
+        for forbidden in ["secret-amap-key", "秘密花园小区", "秘密餐厅 A", "秘密餐厅 B"] {
+            #expect(!traceText.contains(forbidden))
+            #expect(!String(describing: reading.values).contains(forbidden))
         }
     }
 

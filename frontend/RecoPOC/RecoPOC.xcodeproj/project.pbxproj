@@ -178,7 +178,7 @@
 				CODE_SIGN_ENTITLEMENTS = RecoPOCHost.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = BYRP6L2B45;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Host/RecoPOCHost/Resources/Info.plist;
@@ -207,7 +207,7 @@
 				CODE_SIGN_ENTITLEMENTS = RecoPOCHost.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = BYRP6L2B45;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Host/RecoPOCHost/Resources/Info.plist;

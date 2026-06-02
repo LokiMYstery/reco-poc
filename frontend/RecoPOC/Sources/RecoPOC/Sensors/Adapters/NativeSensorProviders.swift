@@ -1205,24 +1205,115 @@ struct AmapCoordinate: Equatable, Sendable {
 }
 
 struct AmapRawPOI: Decodable, Equatable, Sendable {
+    var id: String?
     var name: String?
     var type: String?
     var typecode: String?
     var location: String?
     var distance: String?
+    var address: String?
 
     init(
+        id: String? = nil,
         name: String? = nil,
         type: String? = nil,
         typecode: String? = nil,
         location: String? = nil,
-        distance: String? = nil
+        distance: String? = nil,
+        address: String? = nil
     ) {
+        self.id = id
         self.name = name
         self.type = type
         self.typecode = typecode
         self.location = location
         self.distance = distance
+        self.address = address
+    }
+}
+
+struct AmapRegeo: Decodable, Equatable, Sendable {
+    var addressComponent: AmapAddressComponent?
+    var pois: [AmapRawPOI]?
+    var aois: [AmapRegeoAOI]?
+
+    init(
+        addressComponent: AmapAddressComponent? = nil,
+        pois: [AmapRawPOI]? = nil,
+        aois: [AmapRegeoAOI]? = nil
+    ) {
+        self.addressComponent = addressComponent
+        self.pois = pois
+        self.aois = aois
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case addressComponent
+        case pois
+        case aois
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.addressComponent = try? container.decode(AmapAddressComponent.self, forKey: .addressComponent)
+        self.pois = try? container.decode([AmapRawPOI].self, forKey: .pois)
+        self.aois = try? container.decode([AmapRegeoAOI].self, forKey: .aois)
+    }
+}
+
+struct AmapAddressComponent: Decodable, Equatable, Sendable {
+    var neighborhood: AmapNamedArea?
+    var building: AmapNamedArea?
+
+    init(neighborhood: AmapNamedArea? = nil, building: AmapNamedArea? = nil) {
+        self.neighborhood = neighborhood
+        self.building = building
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case neighborhood
+        case building
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.neighborhood = try? container.decode(AmapNamedArea.self, forKey: .neighborhood)
+        self.building = try? container.decode(AmapNamedArea.self, forKey: .building)
+    }
+}
+
+struct AmapNamedArea: Decodable, Equatable, Sendable {
+    var name: String?
+    var type: String?
+
+    init(name: String? = nil, type: String? = nil) {
+        self.name = name
+        self.type = type
+    }
+}
+
+struct AmapRegeoAOI: Decodable, Equatable, Sendable {
+    var id: String?
+    var name: String?
+    var type: String?
+    var location: String?
+    var distance: String?
+    var area: String?
+
+    init(
+        id: String? = nil,
+        name: String? = nil,
+        type: String? = nil,
+        location: String? = nil,
+        distance: String? = nil,
+        area: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.type = type
+        self.location = location
+        self.distance = distance
+        self.area = area
     }
 }
 
@@ -1266,6 +1357,7 @@ enum AmapPOIClientError: Error, Equatable, Sendable {
 
 protocol AmapPOIClient: Sendable {
     func convertToAmapCoordinate(longitude: Double, latitude: Double, apiKey: String) async throws -> AmapCoordinate
+    func fetchRegeo(longitude: Double, latitude: Double, radiusM: Double, apiKey: String) async throws -> AmapRegeo
     func fetchAroundPOIs(longitude: Double, latitude: Double, radiusM: Double, apiKey: String) async throws -> [AmapRawPOI]
 }
 
@@ -1297,8 +1389,8 @@ struct LiveAmapPOIClient: AmapPOIClient {
             URLQueryItem(name: "location", value: "\(longitude),\(latitude)"),
             URLQueryItem(name: "radius", value: "\(Int(radiusM.rounded()))"),
             URLQueryItem(name: "sortrule", value: "distance"),
-            URLQueryItem(name: "page_size", value: "10"),
-            URLQueryItem(name: "show_fields", value: "business"),
+            URLQueryItem(name: "page_size", value: Self.aroundPageSize),
+            URLQueryItem(name: "show_fields", value: Self.aroundShowFields),
             URLQueryItem(name: "types", value: Self.poiTypeFilter)
         ]
         guard let url = components?.url else { throw AmapPOIClientError.invalidURL }
@@ -1307,6 +1399,24 @@ struct LiveAmapPOIClient: AmapPOIClient {
             throw AmapPOIClientError.apiFailure(response.info ?? response.infocode ?? "unknown")
         }
         return response.pois ?? []
+    }
+
+    func fetchRegeo(longitude: Double, latitude: Double, radiusM: Double, apiKey: String) async throws -> AmapRegeo {
+        var components = URLComponents(string: "https://restapi.amap.com/v3/geocode/regeo")
+        components?.queryItems = [
+            URLQueryItem(name: "key", value: apiKey),
+            URLQueryItem(name: "location", value: "\(longitude),\(latitude)"),
+            URLQueryItem(name: "radius", value: "\(Int(radiusM.rounded()))"),
+            URLQueryItem(name: "extensions", value: Self.regeoExtensions),
+            URLQueryItem(name: "roadlevel", value: Self.regeoRoadLevel),
+            URLQueryItem(name: "homeorcorp", value: Self.regeoHomeOrCorp)
+        ]
+        guard let url = components?.url else { throw AmapPOIClientError.invalidURL }
+        let response: AmapRegeoResponse = try await fetch(url)
+        guard response.status == "1" else {
+            throw AmapPOIClientError.apiFailure(response.info ?? response.infocode ?? "unknown")
+        }
+        return response.regeocode ?? AmapRegeo()
     }
 
     private func fetch<T: Decodable>(_ url: URL) async throws -> T {
@@ -1321,6 +1431,12 @@ struct LiveAmapPOIClient: AmapPOIClient {
         }
     }
 
+    static let aroundPageSize = "25"
+    static let aroundShowFields = "business,children,indoor,navi"
+    static let regeoExtensions = "all"
+    static let regeoRoadLevel = "1"
+    static let regeoHomeOrCorp = "1"
+
     private static let poiTypeFilter = [
         "050000",
         "060000",
@@ -1334,20 +1450,62 @@ struct LiveAmapPOIClient: AmapPOIClient {
     ].joined(separator: "|")
 }
 
-struct FakeAmapPOIClient: AmapPOIClient {
+final class FakeAmapPOIClient: AmapPOIClient, @unchecked Sendable {
+    struct CoordinateConvertRequest: Equatable, Sendable {
+        var longitude: Double
+        var latitude: Double
+    }
+
+    struct RegeoRequest: Equatable, Sendable {
+        var longitude: Double
+        var latitude: Double
+        var radiusM: Double
+    }
+
+    struct AroundRequest: Equatable, Sendable {
+        var longitude: Double
+        var latitude: Double
+        var radiusM: Double
+    }
+
     var convertedCoordinate: Result<AmapCoordinate, AmapPOIClientError>?
+    var regeo: Result<AmapRegeo, AmapPOIClientError>
     var pois: Result<[AmapRawPOI], AmapPOIClientError>
+
+    private let lock = NSLock()
+    private var recordedCoordinateConvertRequests: [CoordinateConvertRequest] = []
+    private var recordedRegeoRequests: [RegeoRequest] = []
+    private var recordedAroundRequests: [AroundRequest] = []
 
     init(
         convertedCoordinate: Result<AmapCoordinate, AmapPOIClientError>? = nil,
+        regeo: Result<AmapRegeo, AmapPOIClientError> = .success(AmapRegeo()),
         pois: Result<[AmapRawPOI], AmapPOIClientError>
     ) {
         self.convertedCoordinate = convertedCoordinate
+        self.regeo = regeo
         self.pois = pois
+    }
+
+    var coordinateConvertRequests: [CoordinateConvertRequest] {
+        lock.withLock { recordedCoordinateConvertRequests }
+    }
+
+    var regeoRequests: [RegeoRequest] {
+        lock.withLock { recordedRegeoRequests }
+    }
+
+    var aroundRequests: [AroundRequest] {
+        lock.withLock { recordedAroundRequests }
     }
 
     func convertToAmapCoordinate(longitude: Double, latitude: Double, apiKey: String) async throws -> AmapCoordinate {
         _ = apiKey
+        lock.withLock {
+            recordedCoordinateConvertRequests.append(
+                CoordinateConvertRequest(longitude: longitude, latitude: latitude)
+            )
+        }
         switch convertedCoordinate {
         case .success(let coordinate):
             return coordinate
@@ -1358,8 +1516,28 @@ struct FakeAmapPOIClient: AmapPOIClient {
         }
     }
 
+    func fetchRegeo(longitude: Double, latitude: Double, radiusM: Double, apiKey: String) async throws -> AmapRegeo {
+        _ = apiKey
+        lock.withLock {
+            recordedRegeoRequests.append(
+                RegeoRequest(longitude: longitude, latitude: latitude, radiusM: radiusM)
+            )
+        }
+        switch regeo {
+        case .success(let regeo):
+            return regeo
+        case .failure(let error):
+            throw error
+        }
+    }
+
     func fetchAroundPOIs(longitude: Double, latitude: Double, radiusM: Double, apiKey: String) async throws -> [AmapRawPOI] {
-        _ = (longitude, latitude, radiusM, apiKey)
+        _ = apiKey
+        lock.withLock {
+            recordedAroundRequests.append(
+                AroundRequest(longitude: longitude, latitude: latitude, radiusM: radiusM)
+            )
+        }
         switch pois {
         case .success(let pois):
             return pois
@@ -1445,14 +1623,93 @@ enum NativePlaceTypeMapper {
             }
         }
 
-        let poiStartedAt = Date()
-        let rawPOIs: [AmapRawPOI]
+        let locationAccuracyM = max(0, location.horizontalAccuracy)
+        let sampleAgeS = max(0, Date().timeIntervalSince(location.timestamp))
+        let regeoRadiusM = regeoRadiusM(forLocationAccuracy: locationAccuracyM)
+        let aroundRadiusM = min(max(configuration.radiusM, 0), 500)
+        let maxDistanceM = min(max(max(aroundRadiusM, regeoRadiusM), 0), 500)
+
+        let regeoStartedAt = Date()
+        var regeoCandidates: [NativePlaceCandidate] = []
+        var regeoContext = NativeRegeoContext()
         do {
-            rawPOIs = try await client.fetchAroundPOIs(
+            let regeo = try await client.fetchRegeo(
                 longitude: coordinate.longitude,
                 latitude: coordinate.latitude,
-                radiusM: configuration.radiusM,
+                radiusM: regeoRadiusM,
                 apiKey: configuration.trimmedAPIKey
+            )
+            let regeoMapping = candidates(
+                from: regeo,
+                origin: coordinate,
+                locationAccuracyM: locationAccuracyM,
+                sampleAgeS: sampleAgeS,
+                maxDistanceM: maxDistanceM
+            )
+            regeoCandidates = regeoMapping.candidates
+            regeoContext = regeoMapping.context
+            steps.append(
+                SensorStepTrace(
+                    name: "amap.regeo",
+                    startedAt: regeoStartedAt,
+                    endedAt: Date(),
+                    availability: regeoCandidates.isEmpty ? .unavailable : .available,
+                    reasonCode: regeoCandidates.isEmpty ? "amap_regeo_no_usable_evidence" : nil,
+                    detail: regeoTraceDetail(
+                        radiusM: regeoRadiusM,
+                        context: regeoContext,
+                        candidates: regeoCandidates
+                    )
+                )
+            )
+        } catch {
+            let diagnostics = amapDiagnostics(for: error)
+            steps.append(
+                SensorStepTrace(
+                    name: "amap.regeo",
+                    startedAt: regeoStartedAt,
+                    endedAt: Date(),
+                    availability: .unavailable,
+                    reasonCode: diagnostics.reasonCode,
+                    detail: diagnostics.detail
+                )
+            )
+        }
+
+        let poiStartedAt = Date()
+        var aroundCandidates: [NativePlaceCandidate] = []
+        do {
+            let rawPOIs = try await client.fetchAroundPOIs(
+                longitude: coordinate.longitude,
+                latitude: coordinate.latitude,
+                radiusM: aroundRadiusM,
+                apiKey: configuration.trimmedAPIKey
+            )
+            aroundCandidates = candidates(
+                from: rawPOIs,
+                origin: coordinate,
+                locationAccuracyM: locationAccuracyM,
+                sampleAgeS: sampleAgeS,
+                maxDistanceM: maxDistanceM,
+                regeoContext: regeoContext,
+                providerKind: .aroundPOI
+            )
+            steps.append(
+                SensorStepTrace(
+                    name: "amap.place_around",
+                    startedAt: poiStartedAt,
+                    endedAt: Date(),
+                    availability: aroundCandidates.isEmpty ? .unavailable : .available,
+                    reasonCode: aroundCandidates.isEmpty ? "amap_no_usable_poi" : nil,
+                    detail: [
+                        "radius_m=\(Int(aroundRadiusM.rounded()))",
+                        "page_size=\(LiveAmapPOIClient.aroundPageSize)",
+                        "show_fields=\(LiveAmapPOIClient.aroundShowFields)",
+                        "result_count=\(rawPOIs.count)",
+                        "usable_count=\(aroundCandidates.count)",
+                        "top_candidates=\(candidateTraceSummary(aroundCandidates))"
+                    ].joined(separator: ";")
+                )
             )
         } catch {
             let diagnostics = amapDiagnostics(for: error)
@@ -1466,34 +1723,9 @@ enum NativePlaceTypeMapper {
                     detail: diagnostics.detail
                 )
             )
-            let decision = unavailableDecision(reasonCode: diagnostics.reasonCode)
-            return (decision.place, steps + [decisionStep(for: decision)])
         }
 
-        let candidates = candidates(
-            from: rawPOIs,
-            origin: coordinate,
-            locationAccuracyM: max(0, location.horizontalAccuracy),
-            sampleAgeS: max(0, Date().timeIntervalSince(location.timestamp)),
-            maxDistanceM: min(max(configuration.radiusM, 0), 500)
-        )
-        steps.append(
-            SensorStepTrace(
-                name: "amap.place_around",
-                startedAt: poiStartedAt,
-                endedAt: Date(),
-                availability: candidates.isEmpty ? .unavailable : .available,
-                reasonCode: candidates.isEmpty ? "amap_no_usable_poi" : nil,
-                detail: [
-                    "radius_m=\(Int(configuration.radiusM.rounded()))",
-                    "result_count=\(rawPOIs.count)",
-                    "usable_count=\(candidates.count)",
-                    "top_candidates=\(candidateTraceSummary(candidates))"
-                ].joined(separator: ";")
-            )
-        )
-
-        let decision = decide(candidates: candidates)
+        let decision = decide(candidates: regeoCandidates + aroundCandidates)
         return (decision.place, steps + [decisionStep(for: decision)])
     }
 
@@ -1518,7 +1750,9 @@ enum NativePlaceTypeMapper {
             rank: rank,
             locationAccuracyM: locationAccuracyM,
             sampleAgeS: sampleAgeS,
-            coordinate: nil
+            coordinate: nil,
+            regeoContext: NativeRegeoContext(),
+            providerKind: .aroundPOI
         )
     }
 
@@ -1531,7 +1765,9 @@ enum NativePlaceTypeMapper {
         origin: AmapCoordinate,
         locationAccuracyM: Double,
         sampleAgeS: TimeInterval,
-        maxDistanceM: Double
+        maxDistanceM: Double,
+        regeoContext: NativeRegeoContext,
+        providerKind: NativePlaceEvidenceKind
     ) -> [NativePlaceCandidate] {
         let maxDistanceM = max(0, min(maxDistanceM, 500))
         return dedupeCandidates(
@@ -1545,11 +1781,185 @@ enum NativePlaceTypeMapper {
                     rank: index,
                     locationAccuracyM: locationAccuracyM,
                     sampleAgeS: sampleAgeS,
-                    coordinate: coordinate
+                    coordinate: coordinate,
+                    regeoContext: regeoContext,
+                    providerKind: providerKind
                 )
             }
-            .filter { $0.confidence > 0 }
+            .filter { $0.placeType != "任意" && $0.confidence > 0 }
         )
+    }
+
+    private static func candidates(
+        from regeo: AmapRegeo,
+        origin: AmapCoordinate,
+        locationAccuracyM: Double,
+        sampleAgeS: TimeInterval,
+        maxDistanceM: Double
+    ) -> (candidates: [NativePlaceCandidate], context: NativeRegeoContext) {
+        let maxDistanceM = max(0, min(maxDistanceM, 500))
+        let aois = regeo.aois ?? []
+        let building = regeo.addressComponent?.building
+        let neighborhood = regeo.addressComponent?.neighborhood
+        let campusContainer = aois.contains { hasContainerEvidence(name: $0.name, type: $0.type) }
+            || hasContainerEvidence(name: building?.name, type: building?.type)
+            || hasContainerEvidence(name: neighborhood?.name, type: neighborhood?.type)
+
+        var structuralCandidates: [NativePlaceCandidate] = []
+        for (index, aoi) in aois.enumerated() {
+            let distance = max(0, doubleValue(aoi.distance) ?? 0)
+            guard distance <= maxDistanceM else { continue }
+            if let candidate = structuralCandidate(
+                name: aoi.name,
+                type: aoi.type,
+                distance: distance,
+                rank: index,
+                locationAccuracyM: locationAccuracyM,
+                sampleAgeS: sampleAgeS,
+                providerKind: .regeoAOI,
+                campusContainer: campusContainer
+            ) {
+                structuralCandidates.append(candidate)
+            }
+        }
+        if let building,
+           let candidate = structuralCandidate(
+            name: building.name,
+            type: building.type,
+            distance: 0,
+            rank: 0,
+            locationAccuracyM: locationAccuracyM,
+            sampleAgeS: sampleAgeS,
+            providerKind: .regeoBuilding,
+            campusContainer: campusContainer
+           ) {
+            structuralCandidates.append(candidate)
+        }
+        if let neighborhood,
+           let candidate = structuralCandidate(
+            name: neighborhood.name,
+            type: neighborhood.type,
+            distance: 0,
+            rank: 0,
+            locationAccuracyM: locationAccuracyM,
+            sampleAgeS: sampleAgeS,
+            providerKind: .regeoNeighborhood,
+            campusContainer: campusContainer
+           ) {
+            structuralCandidates.append(candidate)
+        }
+
+        let structuralTypes = Set(structuralCandidates.map(\.placeType))
+        let context = NativeRegeoContext(
+            campusContainer: campusContainer,
+            aoiCount: aois.count,
+            buildingPresent: building?.hasContent == true,
+            neighborhoodPresent: neighborhood?.hasContent == true,
+            structuralPlaceTypes: structuralTypes,
+            structuralCandidateCount: structuralCandidates.count
+        )
+        let poiCandidates = candidates(
+            from: regeo.pois ?? [],
+            origin: origin,
+            locationAccuracyM: locationAccuracyM,
+            sampleAgeS: sampleAgeS,
+            maxDistanceM: maxDistanceM,
+            regeoContext: context,
+            providerKind: .regeoPOI
+        )
+        return (dedupeCandidates(structuralCandidates + poiCandidates), context)
+    }
+
+    private static func structuralCandidate(
+        name: String?,
+        type: String?,
+        distance: Double,
+        rank: Int,
+        locationAccuracyM: Double,
+        sampleAgeS: TimeInterval,
+        providerKind: NativePlaceEvidenceKind,
+        campusContainer: Bool
+    ) -> NativePlaceCandidate? {
+        let text = [name, type].compactMap { $0 }.joined(separator: " ")
+        let textPlaceType = placeType(forText: text)
+        let containerOnly = textPlaceType == nil && hasContainerEvidence(name: name, type: type)
+        guard let placeType = textPlaceType ?? (containerOnly ? "写字楼" : nil) else { return nil }
+
+        var confidence = structuralBaseConfidence(
+            placeType: placeType,
+            providerKind: providerKind,
+            distance: distance,
+            campusContainer: campusContainer,
+            text: text,
+            containerOnly: containerOnly
+        )
+        confidence -= accuracyPenalty(for: locationAccuracyM) * 0.5
+        if sampleAgeS > 120 { confidence -= 0.16 }
+        confidence = min(max(confidence, 0), 0.90)
+        guard confidence > 0 else { return nil }
+
+        let tags = evidenceTags(
+            forText: text,
+            typecodeStrength: .none,
+            nameConflicts: false,
+            typeTextConflicts: false,
+            agreesWithRegeo: false
+        ) + (campusContainer ? ["campus_container"] : [])
+        return NativePlaceCandidate(
+            placeType: placeType,
+            confidence: confidence,
+            source: sourceLabel(for: providerKind, hasTypecodeEvidence: false, hasTypecodeAndFunctionEvidence: false),
+            typecode: nil,
+            distanceM: distance,
+            rank: rank,
+            quality: quality(for: confidence),
+            evidence: [
+                "distance_m=\(Int(distance.rounded()))",
+                "rank=\(rank)",
+                "provider_kind=\(providerKind.rawValue)",
+                "campus_container=\(campusContainer ? 1 : 0)",
+                "container_only=\(containerOnly ? 1 : 0)"
+            ].joined(separator: ","),
+            dedupeKey: "\(providerKind.rawValue):\(placeType):\(rank):\(Int(distance.rounded()))",
+            providerKind: providerKind,
+            tags: Array(Set(tags)).sorted()
+        )
+    }
+
+    private static func structuralBaseConfidence(
+        placeType: String,
+        providerKind: NativePlaceEvidenceKind,
+        distance: Double,
+        campusContainer: Bool,
+        text: String,
+        containerOnly: Bool
+    ) -> Double {
+        if containerOnly {
+            switch providerKind {
+            case .regeoAOI:
+                return distance <= 20 ? 0.46 : 0.38
+            case .regeoBuilding, .regeoNeighborhood:
+                return 0.46
+            case .regeoPOI, .aroundPOI:
+                return 0
+            }
+        }
+        switch providerKind {
+        case .regeoAOI:
+            if placeType == "住宅区" { return distance <= 20 ? 0.82 : 0.74 }
+            if placeType == "商场" { return distance <= 20 ? 0.80 : 0.72 }
+            return distance <= 20 ? 0.74 : 0.66
+        case .regeoBuilding:
+            if placeType == "住宅区", campusContainer, containsAny(text, dormitoryKeywords) { return 0.86 }
+            if placeType == "住宅区" { return 0.82 }
+            if placeType == "商场" || placeType == "写字楼" { return 0.80 }
+            return 0.78
+        case .regeoNeighborhood:
+            if placeType == "住宅区" { return 0.86 }
+            return 0.76
+        case .regeoPOI, .aroundPOI:
+            return 0
+        }
     }
 
     private static func decide(candidates rawCandidates: [NativePlaceCandidate]) -> NativePlaceDecision {
@@ -1558,6 +1968,7 @@ enum NativePlaceTypeMapper {
             return unavailableDecision(reasonCode: "amap_no_usable_poi")
         }
 
+        let hasStructuralEvidence = candidates.contains { $0.providerKind.isStructuralRegeo }
         let groups = Dictionary(grouping: candidates, by: \.placeType)
         let scored = groups.map { placeType, grouped -> NativePlaceCandidate in
             let sorted = grouped.sorted { lhs, rhs in
@@ -1567,17 +1978,38 @@ enum NativePlaceTypeMapper {
             let top = sorted[0]
             let second = sorted.dropFirst().first?.confidence ?? 0
             let third = sorted.dropFirst(2).first?.confidence ?? 0
-            let aggregate = min(0.88, top.confidence + 0.08 * second + 0.04 * third)
+            let providerKinds = Set(grouped.map(\.providerKind))
+            let hasStructural = providerKinds.contains { $0.isStructuralRegeo }
+            let hasAround = providerKinds.contains(.aroundPOI)
+            var aggregate = top.confidence + 0.08 * second + 0.04 * third
+            if hasStructural {
+                aggregate += 0.04
+            }
+            if hasStructural && hasAround {
+                aggregate += 0.04
+            }
+            if hasStructuralEvidence && !hasStructural {
+                aggregate -= 0.04
+            }
+            aggregate = min(0.90, max(0, aggregate))
+            let source = hasStructural && hasAround ? "amap_fused_evidence" : top.source
+            let tags = Array(Set(grouped.flatMap(\.tags))).sorted()
             return NativePlaceCandidate(
                 placeType: placeType,
                 confidence: aggregate,
-                source: top.source,
+                source: source,
                 typecode: top.typecode,
                 distanceM: top.distanceM,
                 rank: top.rank,
                 quality: quality(for: aggregate),
-                evidence: "aggregate_count=\(sorted.count);top_typecode=\(top.typecode ?? "none")",
-                dedupeKey: top.dedupeKey
+                evidence: [
+                    "aggregate_count=\(sorted.count)",
+                    "top_typecode=\(top.typecode ?? "none")",
+                    "providers=\(providerKinds.map(\.rawValue).sorted().joined(separator: ","))"
+                ].joined(separator: ";"),
+                dedupeKey: top.dedupeKey,
+                providerKind: top.providerKind,
+                tags: tags
             )
         }
         .sorted { lhs, rhs in
@@ -1591,11 +2023,8 @@ enum NativePlaceTypeMapper {
 
         let runnerUp = scored.dropFirst().first
         let margin = winner.confidence - (runnerUp?.confidence ?? 0)
-        var finalConfidence = winner.confidence
+        let finalConfidence = winner.confidence
         let hasCloseRunnerUp = runnerUp.map { $0.confidence >= 0.35 && margin < 0.12 } ?? false
-        if hasCloseRunnerUp {
-            finalConfidence = max(0, finalConfidence - 0.10)
-        }
 
         guard finalConfidence >= 0.35 else {
             return unavailableDecision(
@@ -1637,7 +2066,9 @@ enum NativePlaceTypeMapper {
         rank: Int,
         locationAccuracyM: Double,
         sampleAgeS: TimeInterval,
-        coordinate: AmapCoordinate?
+        coordinate: AmapCoordinate?,
+        regeoContext: NativeRegeoContext,
+        providerKind: NativePlaceEvidenceKind
     ) -> NativePlaceCandidate {
         let typeEvidence = placeTypeForTypecode(poi.typecode, typeText: poi.type, name: poi.name)
         let text = [poi.name, poi.type].compactMap { $0 }.joined(separator: " ")
@@ -1669,27 +2100,44 @@ enum NativePlaceTypeMapper {
         } else if rank <= 2 {
             confidence += 0.02
         }
+        let agreesWithRegeo = regeoContext.structuralPlaceTypes.contains(placeType)
+        if agreesWithRegeo {
+            confidence += providerKind == .aroundPOI ? 0.04 : 0.02
+        }
         confidence -= accuracyPenalty(for: locationAccuracyM)
         if nameConflicts { confidence -= 0.12 }
         if typeTextConflicts { confidence -= 0.08 }
         if sampleAgeS > 120 { confidence -= 0.20 }
 
-        let cap = candidateCap(
+        var cap = candidateCap(
             strength: typecodeStrength,
             hasNameEvidence: hasNameEvidence,
             hasTypeTextEvidence: hasTypeTextEvidence,
             distance: distance
         )
+        if providerKind == .regeoPOI {
+            cap = min(cap, 0.62)
+        }
+        if providerKind == .aroundPOI, agreesWithRegeo {
+            cap = min(max(cap, 0.86), 0.86)
+        }
+        if providerKind == .aroundPOI || providerKind == .regeoPOI {
+            cap = min(cap, poiDistanceCap(for: distance))
+        }
         confidence = min(max(confidence, 0), cap)
 
-        let source: String
-        if hasTypecodeEvidence && (nameMatchesTypecode || nameRefinesCoarseTypecode || containsAny(text, [placeType])) {
-            source = "amap_typecode_name"
-        } else if hasTypecodeEvidence {
-            source = "amap_typecode"
-        } else {
-            source = "amap_name_keyword"
-        }
+        let source = sourceLabel(
+            for: providerKind,
+            hasTypecodeEvidence: hasTypecodeEvidence,
+            hasTypecodeAndFunctionEvidence: hasTypecodeEvidence && (nameMatchesTypecode || nameRefinesCoarseTypecode || containsAny(text, [placeType]))
+        )
+        let tags = evidenceTags(
+            forText: text,
+            typecodeStrength: typecodeStrength,
+            nameConflicts: nameConflicts,
+            typeTextConflicts: typeTextConflicts,
+            agreesWithRegeo: agreesWithRegeo
+        )
 
         return NativePlaceCandidate(
             placeType: placeType,
@@ -1705,9 +2153,12 @@ enum NativePlaceTypeMapper {
                 "rank=\(rank)",
                 "source=\(source)",
                 "name_conflict=\(nameConflicts)",
-                "type_text_conflict=\(typeTextConflicts)"
+                "type_text_conflict=\(typeTextConflicts)",
+                "provider_kind=\(providerKind.rawValue)"
             ].joined(separator: ","),
-            dedupeKey: makeDedupeKey(poi: poi, coordinate: coordinate, placeType: placeType)
+            dedupeKey: makeDedupeKey(poi: poi, coordinate: coordinate, placeType: placeType, providerKind: providerKind),
+            providerKind: providerKind,
+            tags: tags
         )
     }
 
@@ -1724,11 +2175,23 @@ enum NativePlaceTypeMapper {
         if typecode.hasPrefix("1101") || (typecode.hasPrefix("110") && containsAny(text, ["公园", "景区", "绿地", "湿地"])) {
             return TypecodeEvidence(placeType: "公园", strength: .mediumStrong)
         }
-        if typecode.hasPrefix("1405") || (typecode.hasPrefix("140") && containsAny(text, ["图书馆", "书店", "阅览室"])) {
+        if isCultureEducationTypecode(typecode) && containsAny(text, residentialKeywords) {
+            return TypecodeEvidence(placeType: "住宅区", strength: .coarse)
+        }
+        if isCultureEducationTypecode(typecode) && containsAny(text, sportsKeywords) {
+            return TypecodeEvidence(placeType: "运动场所", strength: .mediumStrong)
+        }
+        if isCultureEducationTypecode(typecode) && containsAny(text, restaurantKeywords) {
+            return TypecodeEvidence(placeType: "餐厅", strength: .mediumStrong)
+        }
+        if typecode.hasPrefix("1405") || (isCultureEducationTypecode(typecode) && containsAny(text, ["图书馆", "书店", "阅览室"])) {
             return TypecodeEvidence(placeType: "图书馆", strength: .strong)
         }
-        if typecode.hasPrefix("140") && containsAny(text, officeKeywords) {
+        if isCultureEducationTypecode(typecode) && containsAny(text, officeKeywords) {
             return TypecodeEvidence(placeType: "写字楼", strength: .mediumStrong)
+        }
+        if isCultureEducationTypecode(typecode) && hasContainerEvidence(name: name, type: typeText) {
+            return TypecodeEvidence(placeType: "写字楼", strength: .container)
         }
         if typecode.hasPrefix("150") && containsAny(text, ["机场", "航站楼", "候机楼"]) {
             return TypecodeEvidence(placeType: "机场", strength: .strong)
@@ -1786,11 +2249,11 @@ enum NativePlaceTypeMapper {
         if containsAny(haystack, ["机场", "airport", "航站楼", "候机楼"]) { return "机场" }
         if containsAny(haystack, ["高铁", "火车站", "铁路", "动车"]) { return "高铁站" }
         if containsAny(haystack, ["地铁", "轨交", "subway", "metro"]) { return "地铁站" }
+        if containsAny(haystack, hotelKeywords) { return "酒店" }
         if containsAny(haystack, residentialKeywords) { return "住宅区" }
         if containsAny(haystack, officeKeywords) { return "写字楼" }
         if containsAny(haystack, restaurantKeywords) { return "餐厅" }
         if containsAny(haystack, mallKeywords) { return "商场" }
-        if containsAny(haystack, ["酒店", "宾馆", "旅馆", "公寓酒店", "hotel"]) { return "酒店" }
         if containsAny(haystack, ["公园", "绿地", "湿地", "景区", "park"]) { return "公园" }
         if containsAny(haystack, ["图书馆", "书店", "阅览室", "library"]) { return "图书馆" }
         if containsAny(haystack, ["海边", "海滩", "沙滩", "码头", "滨海", "beach", "marina"]) { return "海边" }
@@ -1801,6 +2264,87 @@ enum NativePlaceTypeMapper {
     private static func containsAny(_ text: String, _ needles: [String]) -> Bool {
         let haystack = text.lowercased()
         return needles.contains { haystack.contains($0.lowercased()) }
+    }
+
+    private static func hasContainerEvidence(name: String?, type: String?) -> Bool {
+        containsAny([name, type].compactMap { $0 }.joined(separator: " "), containerKeywords)
+    }
+
+    private static func sourceLabel(
+        for providerKind: NativePlaceEvidenceKind,
+        hasTypecodeEvidence: Bool,
+        hasTypecodeAndFunctionEvidence: Bool
+    ) -> String {
+        switch providerKind {
+        case .regeoAOI:
+            return "amap_regeo_aoi"
+        case .regeoBuilding:
+            return "amap_regeo_building"
+        case .regeoNeighborhood:
+            return "amap_regeo_neighborhood"
+        case .regeoPOI:
+            return "amap_regeo_poi"
+        case .aroundPOI:
+            if hasTypecodeAndFunctionEvidence { return "amap_around_typecode_name" }
+            if hasTypecodeEvidence { return "amap_around_typecode" }
+            return "amap_around_name_keyword"
+        }
+    }
+
+    private static func evidenceTags(
+        forText text: String,
+        typecodeStrength: TypecodeStrength,
+        nameConflicts: Bool,
+        typeTextConflicts: Bool,
+        agreesWithRegeo: Bool
+    ) -> [String] {
+        var tags: [String] = []
+        if containsAny(text, residentialKeywords) { tags.append("residential_keyword") }
+        if containsAny(text, dormitoryKeywords) { tags.append("dormitory_keyword") }
+        if containsAny(text, sportsKeywords) { tags.append("sports_keyword") }
+        if containsAny(text, restaurantKeywords) { tags.append("restaurant_keyword") }
+        if containsAny(text, mallKeywords) { tags.append("mall_keyword") }
+        if containsAny(text, officeKeywords) { tags.append("office_keyword") }
+        if containsAny(text, containerKeywords) { tags.append("campus_container") }
+        switch typecodeStrength {
+        case .strong:
+            tags.append("typecode_strong")
+        case .mediumStrong:
+            tags.append("typecode_medium")
+        case .coarse:
+            tags.append("typecode_coarse")
+        case .container:
+            tags.append("typecode_container")
+        case .none:
+            break
+        }
+        if nameConflicts || typeTextConflicts { tags.append("conflict") }
+        if agreesWithRegeo { tags.append("regeo_agreement") }
+        return Array(Set(tags)).sorted()
+    }
+
+    private static func regeoRadiusM(forLocationAccuracy accuracy: Double) -> Double {
+        min(500, max(200, accuracy * 2))
+    }
+
+    private static func regeoTraceDetail(
+        radiusM: Double,
+        context: NativeRegeoContext,
+        candidates: [NativePlaceCandidate]
+    ) -> String {
+        [
+            "radius_m=\(Int(radiusM.rounded()))",
+            "extensions=\(LiveAmapPOIClient.regeoExtensions)",
+            "roadlevel=\(LiveAmapPOIClient.regeoRoadLevel)",
+            "homeorcorp=\(LiveAmapPOIClient.regeoHomeOrCorp)",
+            "aoi_count=\(context.aoiCount)",
+            "building_present=\(context.buildingPresent ? 1 : 0)",
+            "neighborhood_present=\(context.neighborhoodPresent ? 1 : 0)",
+            "campus_container=\(context.campusContainer ? 1 : 0)",
+            "structural_usable_count=\(context.structuralCandidateCount)",
+            "usable_count=\(candidates.count)",
+            "top_candidates=\(candidateTraceSummary(candidates))"
+        ].joined(separator: ";")
     }
 
     private static func distanceM(for poi: AmapRawPOI, coordinate: AmapCoordinate?, origin: AmapCoordinate) -> Double {
@@ -1815,9 +2359,17 @@ enum NativePlaceTypeMapper {
 
     private static func distanceScore(for distance: Double) -> Double {
         if distance <= 50 { return 0.42 }
-        if distance <= 150 { return 0.34 }
-        if distance <= 300 { return 0.22 }
-        if distance <= 500 { return 0.12 }
+        if distance <= 100 { return 0.34 }
+        if distance <= 150 { return 0.26 }
+        if distance <= 300 { return 0.08 }
+        if distance <= 500 { return 0.04 }
+        return 0
+    }
+
+    private static func poiDistanceCap(for distance: Double) -> Double {
+        if distance <= 150 { return 0.88 }
+        if distance <= 300 { return 0.42 }
+        if distance <= 500 { return 0.30 }
         return 0
     }
 
@@ -1841,6 +2393,8 @@ enum NativePlaceTypeMapper {
             return 0.78
         case .coarse:
             return hasNameEvidence ? 0.78 : 0.62
+        case .container:
+            return 0.35
         case .none:
             return hasNameEvidence ? 0.55 : (hasTypeTextEvidence ? 0.50 : 0)
         }
@@ -1856,12 +2410,21 @@ enum NativePlaceTypeMapper {
         return code.isEmpty ? nil : code
     }
 
+    private static func isCultureEducationTypecode(_ typecode: String) -> Bool {
+        typecode.hasPrefix("14")
+    }
+
     private static func doubleValue(_ raw: String?) -> Double? {
         guard let raw else { return nil }
         return Double(raw.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    private static func makeDedupeKey(poi: AmapRawPOI, coordinate: AmapCoordinate?, placeType: String) -> String {
+    private static func makeDedupeKey(
+        poi: AmapRawPOI,
+        coordinate: AmapCoordinate?,
+        placeType: String,
+        providerKind: NativePlaceEvidenceKind
+    ) -> String {
         let locationKey: String
         if let coordinate {
             locationKey = "\((coordinate.latitude * 10_000).rounded() / 10_000):\((coordinate.longitude * 10_000).rounded() / 10_000)"
@@ -1869,7 +2432,7 @@ enum NativePlaceTypeMapper {
             locationKey = "no_location"
         }
         let nameKey = abs((poi.name ?? "unknown").hashValue)
-        return "\(locationKey):\(normalizedTypecode(poi.typecode) ?? "none"):\(placeType):\(nameKey)"
+        return "\(providerKind.rawValue):\(locationKey):\(normalizedTypecode(poi.typecode) ?? "none"):\(placeType):\(nameKey)"
     }
 
     private static func unavailableResult(reasonCode: String, detail: String) -> (place: NativeDerivedPlace, steps: [SensorStepTrace]) {
@@ -1933,6 +2496,8 @@ enum NativePlaceTypeMapper {
             availability: place.poiLookupAvailable ? .available : .unavailable,
             reasonCode: decision.reasonCode,
             detail: [
+                "fusion_winner=\(place.placeType)",
+                "fusion_runner_up=\(decision.runnerUp?.placeType ?? "none")",
                 "chosen_source=\(place.source)",
                 "place_type=\(place.placeType)",
                 "confidence=\(String(format: "%.2f", place.confidence))",
@@ -1952,11 +2517,40 @@ enum NativePlaceTypeMapper {
         return ("amap_error", "AMap request failed with \(nativeDiagnosticValue(String(describing: type(of: error)))).")
     }
 
-    private static let residentialKeywords = ["小区", "公寓", "家园", "花园", "住宅", "社区", "苑"]
-    private static let officeKeywords = ["大厦", "写字楼", "办公", "公司", "科技园", "产业园", "园区", "研究院", "中心", "总部", "学校", "大学", "学院", "office"]
+    private static let dormitoryKeywords = ["学生公寓", "宿舍", "学生宿舍", "宿舍楼", "寝室", "生活区"]
+    private static let residentialKeywords = ["小区", "公寓", "学生公寓", "宿舍", "学生宿舍", "宿舍楼", "寝室", "生活区", "家园", "花园", "住宅", "社区", "苑", "楼栋", "楼座"]
+    private static let officeKeywords = ["大厦", "写字楼", "办公", "办公楼", "商务楼", "公司", "联合办公", "总部", "office"]
     private static let restaurantKeywords = ["餐厅", "饭店", "食堂", "咖啡", "茶饮", "火锅", "烧烤", "料理", "restaurant", "cafe"]
-    private static let mallKeywords = ["商场", "商城", "购物中心", "广场", "百货", "商业", "mall"]
+    private static let mallKeywords = ["商场", "商城", "购物中心", "广场", "百货", "商业街", "mall"]
+    private static let hotelKeywords = ["酒店", "宾馆", "旅馆", "公寓酒店", "酒店式公寓", "民宿", "客栈", "hotel"]
     private static let sportsKeywords = ["运动场所", "体育", "健身房", "健身", "体育馆", "球场", "运动场", "游泳馆", "瑜伽", "羽毛球", "篮球", "足球", "gym", "fitness", "stadium"]
+    private static let containerKeywords = ["学校", "大学", "学院", "校区", "校园", "研究院", "园区", "科技园", "产业园", "中心"]
+}
+
+fileprivate enum NativePlaceEvidenceKind: String, Equatable, Hashable, Sendable {
+    case regeoAOI = "regeo_aoi"
+    case regeoBuilding = "regeo_building"
+    case regeoNeighborhood = "regeo_neighborhood"
+    case regeoPOI = "regeo_poi"
+    case aroundPOI = "around_poi"
+
+    var isStructuralRegeo: Bool {
+        switch self {
+        case .regeoAOI, .regeoBuilding, .regeoNeighborhood:
+            return true
+        case .regeoPOI, .aroundPOI:
+            return false
+        }
+    }
+}
+
+fileprivate struct NativeRegeoContext: Equatable, Sendable {
+    var campusContainer: Bool = false
+    var aoiCount: Int = 0
+    var buildingPresent: Bool = false
+    var neighborhoodPresent: Bool = false
+    var structuralPlaceTypes: Set<String> = []
+    var structuralCandidateCount: Int = 0
 }
 
 struct NativePlaceCandidate: Equatable, Sendable {
@@ -1969,6 +2563,8 @@ struct NativePlaceCandidate: Equatable, Sendable {
     var quality: String
     var evidence: String
     var dedupeKey: String
+    fileprivate var providerKind: NativePlaceEvidenceKind
+    fileprivate var tags: [String]
 
     var placeCandidate: PlaceCandidate {
         PlaceCandidate(
@@ -1998,6 +2594,7 @@ private enum TypecodeStrength: Equatable, Sendable {
     case strong
     case mediumStrong
     case coarse
+    case container
     case none
 
     var score: Double {
@@ -2005,6 +2602,7 @@ private enum TypecodeStrength: Equatable, Sendable {
         case .strong: return 0.30
         case .mediumStrong: return 0.24
         case .coarse: return 0.14
+        case .container: return 0
         case .none: return 0
         }
     }
@@ -2024,6 +2622,13 @@ private struct AmapPlaceAroundResponse: Decodable {
     var pois: [AmapRawPOI]?
 }
 
+private struct AmapRegeoResponse: Decodable {
+    var status: String
+    var info: String?
+    var infocode: String?
+    var regeocode: AmapRegeo?
+}
+
 extension AmapCoordinate {
     init?(rawLocation: String) {
         let parts = rawLocation.split(separator: ",", maxSplits: 1).map(String.init)
@@ -2035,6 +2640,13 @@ extension AmapCoordinate {
         }
         self.longitude = longitude
         self.latitude = latitude
+    }
+}
+
+extension AmapNamedArea {
+    var hasContent: Bool {
+        let text = [name, type].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        return text.contains { !$0.isEmpty }
     }
 }
 #endif
