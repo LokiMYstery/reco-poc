@@ -47,7 +47,8 @@
 
 | 字段 | 类型 | 是否建议传 | 示例 | 风险 |
 |---|---|---:|---|---|
-| `place_type` | string | 建议 | `住宅区` / `写字楼` / `在途` | POI 映射可能不准 |
+| `place_candidates` | array | 推荐 | 见下方 Top-3 示例 | 新版推荐字段；最多 3 项，按 confidence 降序 |
+| `place_type` | string | 兼容保留 | `住宅区` / `写字楼` / `在途` | 旧版单值字段；传 candidates 时后端自动取 Top-1 |
 | `place_type_available` | int | 建议 | `1` / `0` | 0 表示拿不到 |
 | `place_type_confidence` | float | 强烈建议 | `0.72` | 0-1，低置信后端会降权 |
 | `place_type_quality` | string | 建议 | `exact_or_good_mapping` / `noisy_mapping` | 标记映射质量 |
@@ -58,10 +59,45 @@
 内部枚举建议：
 
 ```text
-任意、住宅区、商场、酒店、餐厅、公园、写字楼、机场、图书馆、海边、户外、在途、高铁站、地铁站
+任意、住宅区、商场、酒店、餐厅、公园、写字楼、机场、图书馆、海边、户外、在途、高铁站、地铁站、运动场所
 ```
 
-建议前端/地图侧传：
+推荐前端/地图侧传 Top-3：
+
+```json
+"place_candidates": [
+  {
+    "place_type": "商场",
+    "confidence": 0.72,
+    "distance_m": 18.0,
+    "source": "mapkit_category"
+  },
+  {
+    "place_type": "餐厅",
+    "confidence": 0.61,
+    "distance_m": 24.0,
+    "source": "mapkit_category"
+  },
+  {
+    "place_type": "运动场所",
+    "confidence": 0.58,
+    "distance_m": 36.0,
+    "source": "poi_name_keyword"
+  }
+]
+```
+
+每项结构：
+
+| 字段 | 类型 | 是否需要 | 说明 |
+|---|---|---:|---|
+| `place_type` | string | 必传 | 上述 15 类地点枚举之一 |
+| `confidence` | float | 必传 | `0.0`-`1.0` |
+| `distance_m` | float | 建议 | 用户当前位置到 POI 的距离 |
+| `source` | string | 建议 | 调试来源，例如 `mapkit_category`、`poi_name_keyword`、`mapkit_query_probe` |
+| `quality` | string | 可选 | 单候选质量，例如 `exact_or_good_mapping`、`noisy_mapping` |
+
+兼容旧版前端时，也仍可只传：
 
 ```text
 place_type = 内部映射后的类型
@@ -71,6 +107,9 @@ place_type_quality = exact_or_good_mapping / noisy_mapping / unavailable
 
 后端处理：
 
+- `place_candidates` 存在时：实时规则按排名权重 `1.0 / 0.45 / 0.20` 软融合 Top-3。
+- `place_candidates` 存在时：后端自动将 Top-1 写入兼容字段 `place_type` 和 `place_type_confidence`。
+- Top-1 与 Top-2 的 confidence 差值 `< 0.12`：自动标记 `place_type_quality=noisy_mapping`。
 - `place_type_confidence < 0.55`：地点只作为弱信号。
 - `place_type_quality=noisy_mapping`：不进入细分历史 bucket。
 - `place_type_available=0`：按缺失处理。
