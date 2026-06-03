@@ -1881,7 +1881,8 @@ enum NativePlaceTypeMapper {
         campusContainer: Bool
     ) -> NativePlaceCandidate? {
         let text = [name, type].compactMap { $0 }.joined(separator: " ")
-        let textPlaceType = placeType(forText: text)
+        let textEvidence = keywordEvidence(forText: text)
+        let textPlaceType = textEvidence.strongMatch?.placeType
         let containerOnly = textPlaceType == nil && hasContainerEvidence(name: name, type: type)
         guard let placeType = textPlaceType ?? (containerOnly ? "写字楼" : nil) else { return nil }
 
@@ -1899,7 +1900,7 @@ enum NativePlaceTypeMapper {
         guard confidence > 0 else { return nil }
 
         let tags = evidenceTags(
-            forText: text,
+            keywordEvidence: textEvidence,
             typecodeStrength: .none,
             nameConflicts: false,
             typeTextConflicts: false,
@@ -2072,8 +2073,13 @@ enum NativePlaceTypeMapper {
     ) -> NativePlaceCandidate {
         let typeEvidence = placeTypeForTypecode(poi.typecode, typeText: poi.type, name: poi.name)
         let text = [poi.name, poi.type].compactMap { $0 }.joined(separator: " ")
-        let namePlaceType = placeType(forText: poi.name ?? "")
-        let typeTextPlaceType = placeType(forText: poi.type ?? "")
+        let nameEvidence = keywordEvidence(forText: poi.name ?? "")
+        let typeTextEvidence = keywordEvidence(forText: poi.type ?? "")
+        let combinedEvidence = keywordEvidence(forText: text)
+        let namePlaceType = nameEvidence.strongMatch?.placeType
+        let typeTextPlaceType = typeTextEvidence.strongMatch?.placeType
+        let weakNamePlaceType = nameEvidence.weakMatch?.placeType
+        let weakTypeTextPlaceType = typeTextEvidence.weakMatch?.placeType
         let placeType = typeEvidence?.placeType ?? namePlaceType ?? typeTextPlaceType ?? "任意"
 
         let hasTypecodeEvidence = typeEvidence != nil
@@ -2082,18 +2088,25 @@ enum NativePlaceTypeMapper {
         let typecodeStrength = typeEvidence?.strength ?? .none
         let typecodeIsCoarse = typecodeStrength == .coarse
         let nameMatchesTypecode = hasTypecodeEvidence && namePlaceType == typeEvidence?.placeType
+        let typeTextMatchesTypecode = hasTypecodeEvidence && typeTextPlaceType == typeEvidence?.placeType
         let nameRefinesCoarseTypecode = typecodeIsCoarse && hasNameEvidence && namePlaceType == placeType
+        let typeTextRefinesCoarseTypecode = typecodeIsCoarse && hasTypeTextEvidence && typeTextPlaceType == placeType
+        let weakKeywordMatchesPlaceType = weakNamePlaceType == placeType || weakTypeTextPlaceType == placeType
         let typeTextConflicts = hasTypecodeEvidence && hasTypeTextEvidence && typeTextPlaceType != typeEvidence?.placeType
         let nameConflicts = hasTypecodeEvidence && hasNameEvidence && namePlaceType != typeEvidence?.placeType && !typecodeIsCoarse
 
         var confidence = distanceScore(for: distance)
         confidence += typecodeStrength.score
-        if nameMatchesTypecode {
+        if nameMatchesTypecode || typeTextMatchesTypecode {
             confidence += 0.10
-        } else if nameRefinesCoarseTypecode {
+        } else if nameRefinesCoarseTypecode || typeTextRefinesCoarseTypecode {
             confidence += 0.12
+        } else if hasTypecodeEvidence && weakKeywordMatchesPlaceType {
+            confidence += 0.04
         } else if hasNameEvidence && !hasTypecodeEvidence {
             confidence += 0.10
+        } else if hasTypeTextEvidence && !hasTypecodeEvidence {
+            confidence += 0.08
         }
         if rank == 0 {
             confidence += 0.04
@@ -2129,10 +2142,16 @@ enum NativePlaceTypeMapper {
         let source = sourceLabel(
             for: providerKind,
             hasTypecodeEvidence: hasTypecodeEvidence,
-            hasTypecodeAndFunctionEvidence: hasTypecodeEvidence && (nameMatchesTypecode || nameRefinesCoarseTypecode || containsAny(text, [placeType]))
+            hasTypecodeAndFunctionEvidence: hasTypecodeEvidence && (
+                nameMatchesTypecode
+                    || typeTextMatchesTypecode
+                    || nameRefinesCoarseTypecode
+                    || typeTextRefinesCoarseTypecode
+                    || weakKeywordMatchesPlaceType
+            )
         )
         let tags = evidenceTags(
-            forText: text,
+            keywordEvidence: combinedEvidence,
             typecodeStrength: typecodeStrength,
             nameConflicts: nameConflicts,
             typeTextConflicts: typeTextConflicts,
@@ -2165,47 +2184,71 @@ enum NativePlaceTypeMapper {
     private static func placeTypeForTypecode(_ rawTypecode: String?, typeText: String?, name: String?) -> TypecodeEvidence? {
         guard let typecode = normalizedTypecode(rawTypecode) else { return nil }
         let text = [typeText, name].compactMap { $0 }.joined(separator: " ")
+        let textEvidence = keywordEvidence(forText: text)
+        let strongTextPlaceType = textEvidence.strongMatch?.placeType
+        let weakTextPlaceType = textEvidence.weakMatch?.placeType
 
         if typecode.hasPrefix("050") { return TypecodeEvidence(placeType: "餐厅", strength: .strong) }
         if typecode.hasPrefix("060") { return TypecodeEvidence(placeType: "商场", strength: .mediumStrong) }
         if typecode.hasPrefix("100") { return TypecodeEvidence(placeType: "酒店", strength: .strong) }
-        if typecode.hasPrefix("0801") || (typecode.hasPrefix("080") && containsAny(text, sportsKeywords)) {
+        if typecode.hasPrefix("0801") || (typecode.hasPrefix("080") && strongTextPlaceType == "运动场所") {
             return TypecodeEvidence(placeType: "运动场所", strength: .strong)
         }
-        if typecode.hasPrefix("1101") || (typecode.hasPrefix("110") && containsAny(text, ["公园", "景区", "绿地", "湿地"])) {
+        if typecode.hasPrefix("1101") || (typecode.hasPrefix("110") && strongTextPlaceType == "公园") {
             return TypecodeEvidence(placeType: "公园", strength: .mediumStrong)
         }
-        if isCultureEducationTypecode(typecode) && containsAny(text, residentialKeywords) {
+        if isCultureEducationTypecode(typecode) && strongTextPlaceType == "住宅区" {
             return TypecodeEvidence(placeType: "住宅区", strength: .coarse)
         }
-        if isCultureEducationTypecode(typecode) && containsAny(text, sportsKeywords) {
+        if isCultureEducationTypecode(typecode) && strongTextPlaceType == "运动场所" {
             return TypecodeEvidence(placeType: "运动场所", strength: .mediumStrong)
         }
-        if isCultureEducationTypecode(typecode) && containsAny(text, restaurantKeywords) {
+        if isCultureEducationTypecode(typecode) && strongTextPlaceType == "餐厅" {
             return TypecodeEvidence(placeType: "餐厅", strength: .mediumStrong)
         }
-        if typecode.hasPrefix("1405") || (isCultureEducationTypecode(typecode) && containsAny(text, ["图书馆", "书店", "阅览室"])) {
+        if typecode.hasPrefix("1405") || (isCultureEducationTypecode(typecode) && strongTextPlaceType == "图书馆") {
             return TypecodeEvidence(placeType: "图书馆", strength: .strong)
         }
-        if isCultureEducationTypecode(typecode) && containsAny(text, officeKeywords) {
+        if isCultureEducationTypecode(typecode) && weakTextPlaceType == "图书馆" {
+            return TypecodeEvidence(placeType: "图书馆", strength: .coarse)
+        }
+        if isCultureEducationTypecode(typecode) && strongTextPlaceType == "写字楼" {
             return TypecodeEvidence(placeType: "写字楼", strength: .mediumStrong)
+        }
+        if isCultureEducationTypecode(typecode) && weakTextPlaceType == "写字楼" {
+            return TypecodeEvidence(
+                placeType: "写字楼",
+                strength: hasContainerEvidence(name: name, type: typeText) ? .container : .coarse
+            )
         }
         if isCultureEducationTypecode(typecode) && hasContainerEvidence(name: name, type: typeText) {
             return TypecodeEvidence(placeType: "写字楼", strength: .container)
         }
-        if typecode.hasPrefix("150") && containsAny(text, ["机场", "航站楼", "候机楼"]) {
+        if typecode.hasPrefix("150") && strongTextPlaceType == "机场" {
             return TypecodeEvidence(placeType: "机场", strength: .strong)
         }
-        if typecode.hasPrefix("150") && containsAny(text, ["地铁", "轨交"]) {
+        if typecode.hasPrefix("150") && strongTextPlaceType == "地铁站" {
             return TypecodeEvidence(placeType: "地铁站", strength: .strong)
         }
-        if typecode.hasPrefix("150") && containsAny(text, ["高铁", "火车站", "铁路", "动车"]) {
+        if typecode.hasPrefix("150") && weakTextPlaceType == "地铁站" {
+            return TypecodeEvidence(placeType: "地铁站", strength: .coarse)
+        }
+        if typecode.hasPrefix("150") && strongTextPlaceType == "高铁站" {
             return TypecodeEvidence(placeType: "高铁站", strength: .strong)
+        }
+        if typecode.hasPrefix("150") && weakTextPlaceType == "高铁站" {
+            return TypecodeEvidence(placeType: "高铁站", strength: .coarse)
+        }
+        if typecode.hasPrefix("150") && strongTextPlaceType == "在途" {
+            return TypecodeEvidence(placeType: "在途", strength: .coarse)
         }
         if typecode.hasPrefix("150") { return TypecodeEvidence(placeType: "在途", strength: .coarse) }
         if typecode.hasPrefix("170") { return TypecodeEvidence(placeType: "写字楼", strength: .mediumStrong) }
         if typecode.hasPrefix("120") {
-            if let textPlaceType = placeType(forText: text), textPlaceType == "写字楼" || textPlaceType == "住宅区" {
+            if let textPlaceType = strongTextPlaceType, textPlaceType == "写字楼" || textPlaceType == "住宅区" {
+                return TypecodeEvidence(placeType: textPlaceType, strength: .coarse)
+            }
+            if let textPlaceType = weakTextPlaceType, textPlaceType == "写字楼" || textPlaceType == "住宅区" {
                 return TypecodeEvidence(placeType: textPlaceType, strength: .coarse)
             }
             return TypecodeEvidence(placeType: "住宅区", strength: .coarse)
@@ -2243,27 +2286,62 @@ enum NativePlaceTypeMapper {
         return summary.isEmpty ? "none" : summary
     }
 
-    private static func placeType(forText text: String) -> String? {
+    private static func keywordEvidence(forText text: String) -> TextKeywordEvidence {
         let haystack = text.lowercased()
-        if containsAny(haystack, sportsKeywords) { return "运动场所" }
-        if containsAny(haystack, ["机场", "airport", "航站楼", "候机楼"]) { return "机场" }
-        if containsAny(haystack, ["高铁", "火车站", "铁路", "动车"]) { return "高铁站" }
-        if containsAny(haystack, ["地铁", "轨交", "subway", "metro"]) { return "地铁站" }
-        if containsAny(haystack, hotelKeywords) { return "酒店" }
-        if containsAny(haystack, residentialKeywords) { return "住宅区" }
-        if containsAny(haystack, officeKeywords) { return "写字楼" }
-        if containsAny(haystack, restaurantKeywords) { return "餐厅" }
-        if containsAny(haystack, mallKeywords) { return "商场" }
-        if containsAny(haystack, ["公园", "绿地", "湿地", "景区", "park"]) { return "公园" }
-        if containsAny(haystack, ["图书馆", "书店", "阅览室", "library"]) { return "图书馆" }
-        if containsAny(haystack, ["海边", "海滩", "沙滩", "码头", "滨海", "beach", "marina"]) { return "海边" }
-        if containsAny(haystack, ["公交", "车站", "station", "transit"]) { return "在途" }
-        return nil
+        let strongMatch = strongKeywordRules.first { containsAny(haystack, $0.keywords) }.map {
+            KeywordMatch(placeType: $0.placeType, tag: $0.tag)
+        }
+        let weakMatch = weakKeywordRules.first { containsAny(haystack, $0.keywords) }.map {
+            KeywordMatch(placeType: $0.placeType, tag: $0.tag)
+        }
+        return TextKeywordEvidence(
+            strongMatch: strongMatch,
+            weakMatch: weakMatch,
+            hasContainer: containsAny(haystack, containerKeywords)
+        )
     }
 
     private static func containsAny(_ text: String, _ needles: [String]) -> Bool {
         let haystack = text.lowercased()
-        return needles.contains { haystack.contains($0.lowercased()) }
+        return needles.contains { containsTerm(haystack, needle: $0.lowercased()) }
+    }
+
+    private static func containsTerm(_ haystack: String, needle: String) -> Bool {
+        guard !needle.isEmpty else { return false }
+        if !isASCIIWordLike(needle) {
+            return haystack.contains(needle)
+        }
+
+        var searchRange: Range<String.Index>? = haystack.startIndex..<haystack.endIndex
+        while let range = haystack.range(of: needle, options: [], range: searchRange) {
+            let before = range.lowerBound > haystack.startIndex
+                ? haystack[haystack.index(before: range.lowerBound)]
+                : nil
+            let after = range.upperBound < haystack.endIndex
+                ? haystack[range.upperBound]
+                : nil
+            if isASCIIBoundary(before), isASCIIBoundary(after) {
+                return true
+            }
+            searchRange = range.upperBound..<haystack.endIndex
+        }
+        return false
+    }
+
+    private static func isASCIIWordLike(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+        return text.unicodeScalars.allSatisfy { scalar in
+            scalar.isASCII && (
+                CharacterSet.alphanumerics.contains(scalar)
+                    || scalar == " "
+                    || scalar == "-"
+            )
+        }
+    }
+
+    private static func isASCIIBoundary(_ character: Character?) -> Bool {
+        guard let character else { return true }
+        return character.unicodeScalars.allSatisfy { !CharacterSet.alphanumerics.contains($0) }
     }
 
     private static func hasContainerEvidence(name: String?, type: String?) -> Bool {
@@ -2292,20 +2370,21 @@ enum NativePlaceTypeMapper {
     }
 
     private static func evidenceTags(
-        forText text: String,
+        keywordEvidence: TextKeywordEvidence,
         typecodeStrength: TypecodeStrength,
         nameConflicts: Bool,
         typeTextConflicts: Bool,
         agreesWithRegeo: Bool
     ) -> [String] {
         var tags: [String] = []
-        if containsAny(text, residentialKeywords) { tags.append("residential_keyword") }
-        if containsAny(text, dormitoryKeywords) { tags.append("dormitory_keyword") }
-        if containsAny(text, sportsKeywords) { tags.append("sports_keyword") }
-        if containsAny(text, restaurantKeywords) { tags.append("restaurant_keyword") }
-        if containsAny(text, mallKeywords) { tags.append("mall_keyword") }
-        if containsAny(text, officeKeywords) { tags.append("office_keyword") }
-        if containsAny(text, containerKeywords) { tags.append("campus_container") }
+        if let strongMatch = keywordEvidence.strongMatch {
+            tags.append(strongMatch.tag)
+            tags.append("strong_keyword")
+        }
+        if let weakMatch = keywordEvidence.weakMatch {
+            tags.append("weak_\(weakMatch.tag)")
+        }
+        if keywordEvidence.hasContainer { tags.append("campus_container") }
         switch typecodeStrength {
         case .strong:
             tags.append("typecode_strong")
@@ -2392,7 +2471,7 @@ enum NativePlaceTypeMapper {
         case .mediumStrong:
             return 0.78
         case .coarse:
-            return hasNameEvidence ? 0.78 : 0.62
+            return (hasNameEvidence || hasTypeTextEvidence) ? 0.78 : 0.62
         case .container:
             return 0.35
         case .none:
@@ -2517,14 +2596,76 @@ enum NativePlaceTypeMapper {
         return ("amap_error", "AMap request failed with \(nativeDiagnosticValue(String(describing: type(of: error)))).")
     }
 
-    private static let dormitoryKeywords = ["学生公寓", "宿舍", "学生宿舍", "宿舍楼", "寝室", "生活区"]
-    private static let residentialKeywords = ["小区", "公寓", "学生公寓", "宿舍", "学生宿舍", "宿舍楼", "寝室", "生活区", "家园", "花园", "住宅", "社区", "苑", "楼栋", "楼座"]
-    private static let officeKeywords = ["大厦", "写字楼", "办公", "办公楼", "商务楼", "公司", "联合办公", "总部", "office"]
-    private static let restaurantKeywords = ["餐厅", "饭店", "食堂", "咖啡", "茶饮", "火锅", "烧烤", "料理", "restaurant", "cafe"]
-    private static let mallKeywords = ["商场", "商城", "购物中心", "广场", "百货", "商业街", "mall"]
-    private static let hotelKeywords = ["酒店", "宾馆", "旅馆", "公寓酒店", "酒店式公寓", "民宿", "客栈", "hotel"]
-    private static let sportsKeywords = ["运动场所", "体育", "健身房", "健身", "体育馆", "球场", "运动场", "游泳馆", "瑜伽", "羽毛球", "篮球", "足球", "gym", "fitness", "stadium"]
-    private static let containerKeywords = ["学校", "大学", "学院", "校区", "校园", "研究院", "园区", "科技园", "产业园", "中心"]
+    private static let dormitoryKeywords = ["学生公寓", "宿舍", "学生宿舍", "宿舍楼", "寝室", "生活区", "家属院", "家属区", "家属楼", "dormitory"]
+    private static let residentialStrongKeywords = [
+        "小区", "公寓", "学生公寓", "宿舍", "学生宿舍", "宿舍楼", "寝室", "生活区", "家属院", "家属区",
+        "居民楼", "住宅楼", "家属楼", "家园", "住宅", "苑", "楼栋", "楼座", "apartment", "residence",
+        "residential", "dormitory"
+    ]
+    private static let residentialWeakKeywords = ["花园", "社区", "新村"]
+    private static let mallStrongKeywords = [
+        "购物广场", "商业广场", "商业中心", "奥特莱斯", "综合体", "商场", "商城", "购物中心", "百货",
+        "商业街", "shopping mall", "shopping center", "department store", "outlets", "mall"
+    ]
+    private static let mallWeakKeywords = ["广场"]
+    private static let hotelStrongKeywords = [
+        "酒店式公寓", "公寓酒店", "服务公寓", "度假村", "招待所", "青年旅舍", "酒店", "宾馆", "旅馆",
+        "民宿", "客栈", "hotel", "hostel", "inn", "resort", "motel"
+    ]
+    private static let restaurantStrongKeywords = [
+        "茶餐厅", "西餐厅", "咖啡馆", "咖啡店", "甜品店", "餐厅", "饭店", "饭馆", "餐馆", "酒楼",
+        "餐饮", "面馆", "粉店", "食堂", "咖啡", "茶饮", "火锅", "烧烤", "料理", "小吃", "菜馆",
+        "烤肉", "酒吧", "restaurant", "cafe", "coffee", "canteen", "bistro"
+    ]
+    private static let parkStrongKeywords = [
+        "运动公园", "体育公园", "森林公园", "湿地公园", "郊野公园", "植物园", "生态园", "风景区",
+        "公园", "绿地", "湿地", "景区", "national park", "botanical garden", "park"
+    ]
+    private static let officeStrongKeywords = [
+        "office building", "business center", "coworking", "写字楼", "办公楼", "商务楼", "商务中心",
+        "软件园", "创意园", "工业园", "办公区", "企业园区", "孵化器", "科技园", "产业园", "联合办公",
+        "总部", "办公", "office"
+    ]
+    private static let officeWeakKeywords = ["大厦", "中心", "公司", "研究院", "学校", "大学", "学院", "园区"]
+    private static let libraryStrongKeywords = ["图书馆", "阅览室", "library"]
+    private static let libraryWeakKeywords = ["书店", "书城", "自习室"]
+    private static let beachStrongKeywords = ["海边", "海滩", "沙滩", "码头", "滨海", "海岸", "beach", "marina", "seaside", "coast"]
+    private static let beachWeakKeywords = ["滨江", "滨河", "湾", "港"]
+    private static let airportStrongKeywords = ["机场", "航站楼", "候机楼", "登机口", "airport", "airport terminal"]
+    private static let metroStrongKeywords = ["地铁站", "轨交站", "subway station", "metro station", "subway", "metro"]
+    private static let metroWeakKeywords = ["地铁口", "地铁出口", "换乘站"]
+    private static let highSpeedRailStrongKeywords = ["高铁站", "火车站", "铁路站", "动车站", "高铁", "train station", "railway station"]
+    private static let highSpeedRailWeakKeywords = ["站前广场", "候车厅"]
+    private static let transitStrongKeywords = ["公交", "公交站", "汽车站", "客运站", "车站", "station", "transit"]
+    private static let sportsStrongKeywords = [
+        "运动场所", "体育馆", "体育场", "操场", "运动场", "健身房", "游泳馆", "瑜伽馆", "羽毛球馆",
+        "篮球馆", "足球场", "球场", "健身", "瑜伽", "羽毛球", "篮球", "足球", "gym", "fitness", "stadium"
+    ]
+    private static let containerKeywords = ["学校", "大学", "学院", "校区", "校园", "研究院", "园区", "中心"]
+    private static let strongKeywordRules: [KeywordRule] = [
+        KeywordRule(placeType: "机场", tag: "airport_keyword", keywords: airportStrongKeywords),
+        KeywordRule(placeType: "高铁站", tag: "high_speed_rail_keyword", keywords: highSpeedRailStrongKeywords),
+        KeywordRule(placeType: "地铁站", tag: "metro_keyword", keywords: metroStrongKeywords),
+        KeywordRule(placeType: "酒店", tag: "hotel_keyword", keywords: hotelStrongKeywords),
+        KeywordRule(placeType: "住宅区", tag: "residential_keyword", keywords: residentialStrongKeywords),
+        KeywordRule(placeType: "图书馆", tag: "library_keyword", keywords: libraryStrongKeywords),
+        KeywordRule(placeType: "公园", tag: "park_keyword", keywords: parkStrongKeywords),
+        KeywordRule(placeType: "餐厅", tag: "restaurant_keyword", keywords: restaurantStrongKeywords),
+        KeywordRule(placeType: "商场", tag: "mall_keyword", keywords: mallStrongKeywords),
+        KeywordRule(placeType: "运动场所", tag: "sports_keyword", keywords: sportsStrongKeywords),
+        KeywordRule(placeType: "海边", tag: "beach_keyword", keywords: beachStrongKeywords),
+        KeywordRule(placeType: "写字楼", tag: "office_keyword", keywords: officeStrongKeywords),
+        KeywordRule(placeType: "在途", tag: "transit_keyword", keywords: transitStrongKeywords),
+    ]
+    private static let weakKeywordRules: [KeywordRule] = [
+        KeywordRule(placeType: "地铁站", tag: "metro_keyword", keywords: metroWeakKeywords),
+        KeywordRule(placeType: "高铁站", tag: "high_speed_rail_keyword", keywords: highSpeedRailWeakKeywords),
+        KeywordRule(placeType: "住宅区", tag: "residential_keyword", keywords: residentialWeakKeywords),
+        KeywordRule(placeType: "商场", tag: "mall_keyword", keywords: mallWeakKeywords),
+        KeywordRule(placeType: "图书馆", tag: "library_keyword", keywords: libraryWeakKeywords),
+        KeywordRule(placeType: "写字楼", tag: "office_keyword", keywords: officeWeakKeywords),
+        KeywordRule(placeType: "海边", tag: "beach_keyword", keywords: beachWeakKeywords),
+    ]
 }
 
 fileprivate enum NativePlaceEvidenceKind: String, Equatable, Hashable, Sendable {
@@ -2588,6 +2729,23 @@ private struct NativePlaceDecision: Equatable, Sendable {
 private struct TypecodeEvidence: Equatable, Sendable {
     var placeType: String
     var strength: TypecodeStrength
+}
+
+private struct KeywordRule: Equatable, Sendable {
+    var placeType: String
+    var tag: String
+    var keywords: [String]
+}
+
+private struct TextKeywordEvidence: Equatable, Sendable {
+    var strongMatch: KeywordMatch?
+    var weakMatch: KeywordMatch?
+    var hasContainer: Bool
+}
+
+private struct KeywordMatch: Equatable, Sendable {
+    var placeType: String
+    var tag: String
 }
 
 private enum TypecodeStrength: Equatable, Sendable {

@@ -211,6 +211,96 @@ struct SensorAcquisitionTests {
         #expect(place.quality == "noisy_mapping")
     }
 
+    @Test("AMap strong keyword expansion maps name-only candidates with low confidence cap")
+    func amapStrongKeywordExpansionMapsNameOnlyCandidates() async throws {
+        let cases: [(name: String, placeType: String)] = [
+            ("测试居民楼", "住宅区"),
+            ("测试 shopping mall", "商场"),
+            ("测试度假村", "酒店"),
+            ("测试茶餐厅", "餐厅"),
+            ("测试运动公园", "公园"),
+            ("测试软件园", "写字楼"),
+            ("测试航站楼", "机场"),
+            ("测试海滩", "海边"),
+            ("测试地铁站", "地铁站"),
+            ("测试高铁站", "高铁站"),
+            ("测试健身房", "运动场所"),
+        ]
+
+        for testCase in cases {
+            let candidate = NativePlaceTypeMapper.testCandidate(name: testCase.name, distance: 40)
+
+            #expect(candidate.placeType == testCase.placeType)
+            #expect(candidate.source == "amap_around_name_keyword")
+            #expect(candidate.confidence <= 0.55)
+            #expect(candidate.quality == "noisy_mapping")
+        }
+    }
+
+    @Test("AMap weak keywords do not map name-only candidates")
+    func amapWeakKeywordsDoNotMapNameOnlyCandidates() async throws {
+        let weakOnlyNames = [
+            "测试市民广场",
+            "测试小花园",
+            "测试书店",
+            "测试自习室",
+            "测试滨江",
+            "测试滨河",
+            "测试中心",
+            "测试公司",
+            "测试大学",
+        ]
+
+        for name in weakOnlyNames {
+            let candidate = NativePlaceTypeMapper.testCandidate(name: name, distance: 40)
+
+            #expect(candidate.placeType == "任意")
+            #expect(candidate.confidence == 0)
+        }
+
+        #expect(NativePlaceTypeMapper.testCandidate(name: "测试购物广场", distance: 40).placeType == "商场")
+        #expect(NativePlaceTypeMapper.testCandidate(name: "测试湿地公园", distance: 40).placeType == "公园")
+        #expect(NativePlaceTypeMapper.testCandidate(name: "测试阅览室", distance: 40).placeType == "图书馆")
+        #expect(NativePlaceTypeMapper.testCandidate(name: "测试滨海码头", distance: 40).placeType == "海边")
+    }
+
+    @Test("AMap weak keywords only supplement aligned typecode evidence")
+    func amapWeakKeywordsOnlySupplementAlignedTypecodeEvidence() async throws {
+        let mall = NativePlaceTypeMapper.testCandidate(
+            typecode: "060100",
+            type: "购物服务",
+            name: "测试市民广场",
+            distance: 40
+        )
+        let library = NativePlaceTypeMapper.testCandidate(
+            typecode: "140600",
+            type: "科教文化服务",
+            name: "测试书店",
+            distance: 40
+        )
+        let metro = NativePlaceTypeMapper.testCandidate(
+            typecode: "150500",
+            type: "交通设施服务",
+            name: "测试地铁出口",
+            distance: 40
+        )
+        let office = NativePlaceTypeMapper.testCandidate(
+            typecode: "170000",
+            type: "公司企业",
+            name: "测试公司",
+            distance: 40
+        )
+
+        #expect(mall.placeType == "商场")
+        #expect(mall.source == "amap_around_typecode_name")
+        #expect(library.placeType == "图书馆")
+        #expect(library.confidence < 0.70)
+        #expect(metro.placeType == "地铁站")
+        #expect(metro.confidence < 0.70)
+        #expect(office.placeType == "写字楼")
+        #expect(office.confidence >= 0.70)
+    }
+
     @Test("AMap campus containers only produce weak office evidence without function evidence")
     func amapCampusContainerOnlyProducesWeakOfficeEvidence() async throws {
         let container = NativePlaceTypeMapper.testCandidate(
