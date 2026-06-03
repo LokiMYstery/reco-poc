@@ -14,6 +14,7 @@ Minimal files required to run the default POC backend:
 ```text
 poc_api.py                    # FastAPI service
 poc_storage.py                # SQLite persistence
+export_poc_logs.py            # privacy-minimized CSV export
 history_booster.py            # stable long-term history fallback
 preference_scorer.py          # personalized preference scorer
 rule_scorer.py                # missing-aware rule scorer
@@ -37,7 +38,7 @@ qwen3_semantic_scorer.py
 ## 2. Install
 
 ```bash
-cd /Users/fengyongxi/Desktop/AI_music-main
+cd /Users/fengyongxi/Desktop/reco-poc-main/backend
 python3 -m pip install -r requirements_poc.txt
 ```
 
@@ -213,6 +214,7 @@ weekday
 network
 bluetooth
 place_type
+place_candidates
 place_type_confidence
 place_type_available
 activity_state_available
@@ -308,7 +310,54 @@ impression does not update preference
 Top-3 place candidate soft fusion
 ```
 
-## 10. More Documentation
+## 10. Export Logs
+
+Use this for Friday analysis after colleagues have tried the TestFlight app several times.
+
+Default export reads `data/poc_music_scene.db` and writes a timestamped folder under `data/exports/`:
+
+```bash
+python3 export_poc_logs.py
+```
+
+Choose a fixed output folder:
+
+```bash
+python3 export_poc_logs.py \
+  --db data/poc_music_scene.db \
+  --out-dir data/exports/friday_test
+```
+
+If the backend is running through Docker on the VPS:
+
+```bash
+docker compose exec reco-poc-backend \
+  python3 export_poc_logs.py \
+  --db /app/data/poc_music_scene.db \
+  --out-dir /app/data/exports/friday_test
+```
+
+Generated files:
+
+```text
+recommendation_events.csv  # context + place Top-3 + recommendation Top-3
+feedback_events.csv        # feedback + accepted/corrected scene + place Top-3
+geo_clusters.csv           # per-user routine place clusters
+export_summary.json        # row counts and export settings
+```
+
+Default privacy behavior:
+
+```text
+user_id -> stable hash
+latitude/longitude -> not exported
+calendar_title -> not exported, only calendar_title_present
+geo_cluster_id -> exported
+```
+
+Only use `--include-user-id` or `--include-sensitive-context` for local debugging, not shared analysis files.
+
+## 11. More Documentation
 
 For detailed request/response schemas, see:
 
