@@ -14,7 +14,10 @@ let package = Package(
     targets: [
         .target(
             name: "RecoPOC",
-            path: "Sources/RecoPOC"
+            path: "Sources/RecoPOC",
+            resources: [
+                .process("Resources")
+            ]
         ),
         .testTarget(
             name: "RecoPOCTests",

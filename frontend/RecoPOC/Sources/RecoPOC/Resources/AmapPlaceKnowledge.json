@@ -1,0 +1,370 @@
+{
+  "query": {
+    "aroundPageSize": 25,
+    "aroundShowFields": "business,children,indoor,navi",
+    "aroundTypePrefixes": [
+      "050000",
+      "060000",
+      "080000",
+      "100000",
+      "110000",
+      "120000",
+      "140000",
+      "150000",
+      "170000",
+      "180000",
+      "190000"
+    ],
+    "regeoExtensions": "all",
+    "regeoRoadLevel": 1,
+    "regeoHomeOrCorp": 1
+  },
+  "keywords": {
+    "containerKeywords": [
+      "学校",
+      "大学",
+      "学院",
+      "校区",
+      "校园",
+      "研究院",
+      "园区",
+      "中心"
+    ],
+    "dormitoryKeywords": [
+      "学生公寓",
+      "宿舍",
+      "学生宿舍",
+      "宿舍楼",
+      "寝室",
+      "生活区",
+      "家属院",
+      "家属区",
+      "家属楼",
+      "dormitory"
+    ],
+    "strongRules": [
+      {
+        "placeType": "机场",
+        "tag": "airport_keyword",
+        "keywords": ["机场", "航站楼", "候机楼", "登机口", "airport", "airport terminal"]
+      },
+      {
+        "placeType": "高铁站",
+        "tag": "high_speed_rail_keyword",
+        "keywords": ["高铁站", "火车站", "铁路站", "动车站", "高铁", "train station", "railway station"]
+      },
+      {
+        "placeType": "地铁站",
+        "tag": "metro_keyword",
+        "keywords": ["地铁站", "轨交站", "subway station", "metro station", "subway", "metro"]
+      },
+      {
+        "placeType": "酒店",
+        "tag": "hotel_keyword",
+        "keywords": ["酒店式公寓", "公寓酒店", "服务公寓", "度假村", "招待所", "青年旅舍", "酒店", "宾馆", "旅馆", "民宿", "客栈", "hotel", "hostel", "inn", "resort", "motel"]
+      },
+      {
+        "placeType": "住宅区",
+        "tag": "residential_keyword",
+        "keywords": ["小区", "公寓", "学生公寓", "宿舍", "学生宿舍", "宿舍楼", "寝室", "生活区", "家属院", "家属区", "居民楼", "住宅楼", "家属楼", "家园", "住宅", "苑", "楼栋", "楼座", "apartment", "residence", "residential", "dormitory"]
+      },
+      {
+        "placeType": "图书馆",
+        "tag": "library_keyword",
+        "keywords": ["图书馆", "阅览室", "library"]
+      },
+      {
+        "placeType": "公园",
+        "tag": "park_keyword",
+        "keywords": ["运动公园", "体育公园", "森林公园", "湿地公园", "郊野公园", "植物园", "生态园", "风景区", "公园", "绿地", "湿地", "景区", "national park", "botanical garden", "park"]
+      },
+      {
+        "placeType": "餐厅",
+        "tag": "restaurant_keyword",
+        "keywords": ["茶餐厅", "西餐厅", "咖啡馆", "咖啡店", "甜品店", "餐厅", "饭店", "饭馆", "餐馆", "酒楼", "餐饮", "面馆", "粉店", "食堂", "咖啡", "茶饮", "火锅", "烧烤", "料理", "小吃", "菜馆", "烤肉", "酒吧", "restaurant", "cafe", "coffee", "canteen", "bistro"]
+      },
+      {
+        "placeType": "商场",
+        "tag": "mall_keyword",
+        "keywords": ["购物广场", "商业广场", "商业中心", "奥特莱斯", "综合体", "商场", "商城", "购物中心", "百货", "商业街", "shopping mall", "shopping center", "department store", "outlets", "mall"]
+      },
+      {
+        "placeType": "运动场所",
+        "tag": "sports_keyword",
+        "keywords": ["运动场所", "体育馆", "体育场", "操场", "运动场", "健身房", "游泳馆", "瑜伽馆", "羽毛球馆", "篮球馆", "足球场", "球场", "健身", "瑜伽", "羽毛球", "篮球", "足球", "gym", "fitness", "stadium"]
+      },
+      {
+        "placeType": "海边",
+        "tag": "beach_keyword",
+        "keywords": ["海边", "海滩", "沙滩", "滨海", "海岸", "beach", "marina", "seaside", "coast"]
+      },
+      {
+        "placeType": "写字楼",
+        "tag": "office_keyword",
+        "keywords": ["office building", "business center", "coworking", "写字楼", "办公楼", "商务楼", "商务中心", "软件园", "创意园", "工业园", "办公区", "企业园区", "孵化器", "科技园", "产业园", "联合办公", "总部", "办公", "office"]
+      },
+      {
+        "placeType": "在途",
+        "tag": "transit_keyword",
+        "keywords": ["公交", "公交站", "汽车站", "客运站", "车站", "station", "transit"]
+      },
+      {
+        "placeType": "户外",
+        "tag": "outdoor_keyword",
+        "keywords": ["观景台", "观景点", "峡谷", "湿地", "森林", "草地", "营地", "自然保护区", "trail", "viewpoint", "campground", "nature reserve", "wetland", "forest", "canyon"]
+      }
+    ],
+    "weakRules": [
+      {
+        "placeType": "地铁站",
+        "tag": "metro_keyword",
+        "keywords": ["地铁口", "地铁出口", "换乘站"]
+      },
+      {
+        "placeType": "高铁站",
+        "tag": "high_speed_rail_keyword",
+        "keywords": ["站前广场", "候车厅"]
+      },
+      {
+        "placeType": "住宅区",
+        "tag": "residential_keyword",
+        "keywords": ["花园", "社区", "新村"]
+      },
+      {
+        "placeType": "商场",
+        "tag": "mall_keyword",
+        "keywords": ["广场"]
+      },
+      {
+        "placeType": "图书馆",
+        "tag": "library_keyword",
+        "keywords": ["书店", "书城", "自习室"]
+      },
+      {
+        "placeType": "写字楼",
+        "tag": "office_keyword",
+        "keywords": ["大厦", "中心", "公司", "研究院", "学校", "大学", "学院", "园区"]
+      },
+      {
+        "placeType": "海边",
+        "tag": "beach_keyword",
+        "keywords": ["滨江", "滨河", "湾", "港"]
+      },
+      {
+        "placeType": "户外",
+        "tag": "outdoor_keyword",
+        "keywords": ["步道"]
+      }
+    ]
+  },
+  "providerTypeRules": [
+    {
+      "placeType": "海边",
+      "matchSegments": ["海滩", "海湾海峡", "岛屿"]
+    },
+    {
+      "placeType": "公园",
+      "matchSegments": ["公园广场"]
+    },
+    {
+      "placeType": "运动场所",
+      "matchSegments": ["运动场馆"]
+    },
+    {
+      "placeType": "图书馆",
+      "matchSegments": ["图书馆"]
+    },
+    {
+      "placeType": "酒店",
+      "matchSegments": ["宾馆酒店", "旅馆招待所"]
+    },
+    {
+      "placeType": "商场",
+      "matchSegments": ["商场", "超级市场", "购物相关场所"]
+    },
+    {
+      "placeType": "住宅区",
+      "matchSegments": ["住宅区"]
+    },
+    {
+      "placeType": "写字楼",
+      "matchSegments": ["楼宇", "产业园区", "公司企业", "公司"]
+    },
+    {
+      "placeType": "户外",
+      "matchSegments": ["风景名胜相关", "风景名胜", "观景点", "红色景区", "国家级景点", "省级景点", "世界遗产", "自然地名", "山", "山脉", "丘陵", "山地", "河流", "湖泊", "平原", "高原", "盆地", "沙漠", "峡谷", "溪谷", "冰川", "三角洲", "半岛"]
+    },
+    {
+      "placeType": "机场",
+      "matchSegments": ["机场相关", "过境口岸"]
+    },
+    {
+      "placeType": "地铁站",
+      "matchSegments": ["地铁站", "轻轨站"]
+    },
+    {
+      "placeType": "高铁站",
+      "matchSegments": ["火车站"]
+    },
+    {
+      "placeType": "在途",
+      "matchSegments": ["交通服务相关", "港口码头", "长途汽车站", "公交车站", "班车站", "出租车", "轮渡站", "索道站", "上下客区", "停车场", "道路附属设施", "服务区", "收费站", "红绿灯", "路牌信息", "警示信息"]
+    }
+  ],
+  "typecodeRules": [
+    { "prefix": "050", "placeType": "餐厅", "strength": "strong" },
+    { "prefix": "060", "placeType": "商场", "strength": "mediumStrong" },
+    { "prefix": "100", "placeType": "酒店", "strength": "strong" },
+    { "prefix": "0801", "placeType": "运动场所", "strength": "strong" },
+    { "prefix": "080", "placeType": "运动场所", "strength": "strong", "requiresProviderTypePlaceType": "运动场所" },
+    { "prefix": "080", "placeType": "运动场所", "strength": "strong", "requiresStrongKeywordPlaceType": "运动场所" },
+    { "prefix": "1101", "placeType": "公园", "strength": "mediumStrong" },
+    { "prefix": "110", "placeType": "公园", "strength": "mediumStrong", "requiresProviderTypePlaceType": "公园" },
+    { "prefix": "110", "placeType": "海边", "strength": "mediumStrong", "requiresProviderTypePlaceType": "海边" },
+    { "prefix": "110", "placeType": "户外", "strength": "mediumStrong", "requiresProviderTypePlaceType": "户外" },
+    { "prefix": "110", "placeType": "公园", "strength": "mediumStrong", "requiresStrongKeywordPlaceType": "公园" },
+    { "prefix": "110", "placeType": "海边", "strength": "mediumStrong", "requiresStrongKeywordPlaceType": "海边" },
+    { "prefix": "110", "placeType": "户外", "strength": "mediumStrong", "requiresStrongKeywordPlaceType": "户外" },
+    { "prefix": "1405", "placeType": "图书馆", "strength": "strong" },
+    { "prefix": "14", "placeType": "图书馆", "strength": "strong", "requiresProviderTypePlaceType": "图书馆" },
+    { "prefix": "14", "placeType": "图书馆", "strength": "strong", "requiresStrongKeywordPlaceType": "图书馆" },
+    { "prefix": "14", "placeType": "图书馆", "strength": "coarse", "requiresWeakKeywordPlaceType": "图书馆" },
+    { "prefix": "14", "placeType": "住宅区", "strength": "coarse", "requiresStrongKeywordPlaceType": "住宅区" },
+    { "prefix": "14", "placeType": "运动场所", "strength": "mediumStrong", "requiresStrongKeywordPlaceType": "运动场所" },
+    { "prefix": "14", "placeType": "餐厅", "strength": "mediumStrong", "requiresStrongKeywordPlaceType": "餐厅" },
+    { "prefix": "14", "placeType": "写字楼", "strength": "mediumStrong", "requiresStrongKeywordPlaceType": "写字楼" },
+    { "prefix": "14", "placeType": "写字楼", "strength": "container", "requiresWeakKeywordPlaceType": "写字楼", "requiresContainerEvidence": true },
+    { "prefix": "14", "placeType": "写字楼", "strength": "coarse", "requiresWeakKeywordPlaceType": "写字楼" },
+    { "prefix": "14", "placeType": "写字楼", "strength": "container", "requiresContainerEvidence": true },
+    { "prefix": "150", "placeType": "机场", "strength": "strong", "requiresProviderTypePlaceType": "机场" },
+    { "prefix": "150", "placeType": "机场", "strength": "strong", "requiresStrongKeywordPlaceType": "机场" },
+    { "prefix": "150", "placeType": "地铁站", "strength": "strong", "requiresProviderTypePlaceType": "地铁站" },
+    { "prefix": "150", "placeType": "地铁站", "strength": "strong", "requiresStrongKeywordPlaceType": "地铁站" },
+    { "prefix": "150", "placeType": "地铁站", "strength": "coarse", "requiresWeakKeywordPlaceType": "地铁站" },
+    { "prefix": "150", "placeType": "高铁站", "strength": "strong", "requiresProviderTypePlaceType": "高铁站" },
+    { "prefix": "150", "placeType": "高铁站", "strength": "strong", "requiresStrongKeywordPlaceType": "高铁站" },
+    { "prefix": "150", "placeType": "高铁站", "strength": "coarse", "requiresWeakKeywordPlaceType": "高铁站" },
+    { "prefix": "150", "placeType": "海边", "strength": "mediumStrong", "requiresProviderTypePlaceType": "在途", "requiresStrongKeywordPlaceType": "海边" },
+    { "prefix": "150", "placeType": "在途", "strength": "coarse", "requiresProviderTypePlaceType": "在途" },
+    { "prefix": "150", "placeType": "在途", "strength": "coarse", "requiresStrongKeywordPlaceType": "在途" },
+    { "prefix": "150", "placeType": "在途", "strength": "coarse" },
+    { "prefix": "170", "placeType": "写字楼", "strength": "mediumStrong" },
+    { "prefix": "180", "placeType": "在途", "strength": "mediumStrong", "requiresProviderTypePlaceType": "在途" },
+    { "prefix": "180", "placeType": "在途", "strength": "mediumStrong", "requiresStrongKeywordPlaceType": "在途" },
+    { "prefix": "180", "placeType": "在途", "strength": "mediumStrong" },
+    { "prefix": "190", "placeType": "海边", "strength": "mediumStrong", "requiresProviderTypePlaceType": "海边" },
+    { "prefix": "190", "placeType": "户外", "strength": "mediumStrong", "requiresProviderTypePlaceType": "户外" },
+    { "prefix": "190", "placeType": "海边", "strength": "mediumStrong", "requiresStrongKeywordPlaceType": "海边" },
+    { "prefix": "190", "placeType": "户外", "strength": "mediumStrong", "requiresStrongKeywordPlaceType": "户外" },
+    { "prefix": "120", "placeType": "写字楼", "strength": "coarse", "requiresProviderTypePlaceType": "写字楼" },
+    { "prefix": "120", "placeType": "写字楼", "strength": "coarse", "requiresStrongKeywordPlaceType": "写字楼" },
+    { "prefix": "120", "placeType": "写字楼", "strength": "coarse", "requiresWeakKeywordPlaceType": "写字楼" },
+    { "prefix": "120", "placeType": "住宅区", "strength": "coarse", "requiresProviderTypePlaceType": "住宅区" },
+    { "prefix": "120", "placeType": "住宅区", "strength": "coarse", "requiresStrongKeywordPlaceType": "住宅区" },
+    { "prefix": "120", "placeType": "住宅区", "strength": "coarse", "requiresWeakKeywordPlaceType": "住宅区" },
+    { "prefix": "120", "placeType": "住宅区", "strength": "coarse" }
+  ],
+  "scoring": {
+    "regeoRadiusMinM": 200,
+    "regeoRadiusMaxM": 500,
+    "regeoRadiusAccuracyMultiplier": 2,
+    "aroundRadiusMaxM": 500,
+    "structural": {
+      "containerAOINear": 0.46,
+      "containerAOIFar": 0.38,
+      "containerBuildingOrNeighborhood": 0.46,
+      "regeoAOIResidentialNear": 0.82,
+      "regeoAOIResidentialFar": 0.74,
+      "regeoAOIMallNear": 0.8,
+      "regeoAOIMallFar": 0.72,
+      "regeoAOIDefaultNear": 0.74,
+      "regeoAOIDefaultFar": 0.66,
+      "regeoBuildingDormResidential": 0.86,
+      "regeoBuildingResidential": 0.82,
+      "regeoBuildingMallOrOffice": 0.8,
+      "regeoBuildingDefault": 0.78,
+      "regeoNeighborhoodResidential": 0.86,
+      "regeoNeighborhoodDefault": 0.76,
+      "accuracyPenaltyMultiplier": 0.5,
+      "staleSamplePenalty": 0.16,
+      "maxConfidence": 0.9
+    },
+    "poiDistanceScoreBands": [
+      { "maxDistanceM": 50, "value": 0.42 },
+      { "maxDistanceM": 100, "value": 0.34 },
+      { "maxDistanceM": 150, "value": 0.26 },
+      { "maxDistanceM": 300, "value": 0.08 },
+      { "maxDistanceM": 500, "value": 0.04 }
+    ],
+    "poiDistanceCapBands": [
+      { "maxDistanceM": 150, "value": 0.88 },
+      { "maxDistanceM": 300, "value": 0.42 },
+      { "maxDistanceM": 500, "value": 0.3 }
+    ],
+    "accuracyPenaltyBands": [
+      { "maxAccuracyM": 50, "penalty": 0 },
+      { "maxAccuracyM": 100, "penalty": 0.06 },
+      { "maxAccuracyM": 250, "penalty": 0.14 },
+      { "maxAccuracyM": 1000000, "penalty": 0.24 }
+    ],
+    "typecodeStrengthScores": {
+      "strong": 0.3,
+      "mediumStrong": 0.24,
+      "coarse": 0.14,
+      "container": 0
+    },
+    "poiBoosts": {
+      "keywordMatchesTypecode": 0.1,
+      "coarseTypecodeRefinement": 0.12,
+      "weakKeywordAlignedWithTypecode": 0.04,
+      "nameOnly": 0.1,
+      "typeOnly": 0.08,
+      "topRank": 0.04,
+      "nearTopRank": 0.02,
+      "aroundRegeoAgreement": 0.04,
+      "regeoPOIAgreement": 0.02
+    },
+    "poiPenalties": {
+      "nameConflict": 0.12,
+      "typeTextConflict": 0.08,
+      "staleSample": 0.2
+    },
+    "poiCaps": {
+      "strongNear": 0.88,
+      "strongFar": 0.78,
+      "mediumStrong": 0.78,
+      "coarseWithFunctionEvidence": 0.78,
+      "coarseOnly": 0.62,
+      "container": 0.35,
+      "nameOnly": 0.55,
+      "typeOnly": 0.5,
+      "regeoPOIMax": 0.62,
+      "aroundRegeoAgreement": 0.86
+    },
+    "fusion": {
+      "secondWeight": 0.08,
+      "thirdWeight": 0.04,
+      "structuralBonus": 0.04,
+      "structuralAroundBonus": 0.04,
+      "missingStructuralPenalty": 0.04,
+      "maxConfidence": 0.9
+    },
+    "quality": {
+      "minimumAvailableConfidence": 0.35,
+      "exactOrGoodMinConfidence": 0.7,
+      "closeRunnerUpMinConfidence": 0.35,
+      "closeRunnerUpMaxMargin": 0.12
+    }
+  },
+  "sourceLabels": {
+    "regeoAOI": "amap_regeo_aoi",
+    "regeoBuilding": "amap_regeo_building",
+    "regeoNeighborhood": "amap_regeo_neighborhood",
+    "regeoPOI": "amap_regeo_poi",
+    "aroundTypecodeName": "amap_around_typecode_name",
+    "aroundTypecode": "amap_around_typecode",
+    "aroundNameKeyword": "amap_around_name_keyword",
+    "fusedEvidence": "amap_fused_evidence",
+    "unavailable": "amap_unavailable"
+  }
+}

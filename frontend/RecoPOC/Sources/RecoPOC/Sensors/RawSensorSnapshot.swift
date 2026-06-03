@@ -426,7 +426,7 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
                 placeType: "写字楼",
                 confidence: 0.78,
                 distanceM: 32,
-                source: "amap_typecode_name",
+                source: "amap_around_typecode_name",
                 quality: "exact_or_good_mapping"
             )
         ],

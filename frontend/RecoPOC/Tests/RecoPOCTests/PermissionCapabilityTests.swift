@@ -104,21 +104,21 @@ final class PermissionCapabilityTests: XCTestCase {
                 placeType: "写字楼",
                 confidence: 0.78,
                 distanceM: 32,
-                source: "amap_typecode_name",
+                source: "amap_around_typecode_name",
                 quality: "exact_or_good_mapping"
             ),
             PlaceCandidate(
                 placeType: "餐厅",
                 confidence: 0.61,
                 distanceM: 48,
-                source: "amap_typecode",
+                source: "amap_around_typecode",
                 quality: "noisy_mapping"
             ),
             PlaceCandidate(
                 placeType: "运动场所",
                 confidence: 0.52,
                 distanceM: 76,
-                source: "amap_name_keyword",
+                source: "amap_around_name_keyword",
                 quality: "noisy_mapping"
             )
         ]
@@ -140,9 +140,9 @@ final class PermissionCapabilityTests: XCTestCase {
         XCTAssertTrue(rows.contains { $0.title == "Captured time" && $0.value.contains("2026") })
         let placeRow = try XCTUnwrap(rows.first { $0.title == "Place" })
         XCTAssertEqual(placeRow.value, "写字楼 78% · 餐厅 61% · 运动场所 52%")
-        XCTAssertTrue(placeRow.detail?.contains("#1 写字楼 78%, 32m, amap_typecode_name, exact_or_good_mapping") == true)
-        XCTAssertTrue(placeRow.detail?.contains("#2 餐厅 61%, 48m, amap_typecode, noisy_mapping") == true)
-        XCTAssertTrue(placeRow.detail?.contains("#3 运动场所 52%, 76m, amap_name_keyword, noisy_mapping") == true)
+        XCTAssertTrue(placeRow.detail?.contains("#1 写字楼 78%, 32m, amap_around_typecode_name, exact_or_good_mapping") == true)
+        XCTAssertTrue(placeRow.detail?.contains("#2 餐厅 61%, 48m, amap_around_typecode, noisy_mapping") == true)
+        XCTAssertTrue(placeRow.detail?.contains("#3 运动场所 52%, 76m, amap_around_name_keyword, noisy_mapping") == true)
         XCTAssertTrue(rows.contains { $0.title == "Network" && $0.value == "wifi" })
         XCTAssertTrue(rows.contains { $0.title == "Audio route" && $0.value == "耳机" })
         XCTAssertTrue(rows.contains { $0.title == "Health" && $0.value.contains("steps/10m 250") })

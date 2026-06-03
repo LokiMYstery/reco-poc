@@ -392,6 +392,137 @@ struct SensorAcquisitionTests {
         #expect(place.candidates.isEmpty)
     }
 
+    @Test("AMap bundled knowledge exposes configured runtime labels and absorbed query prefixes")
+    func amapBundledKnowledgeLoads() throws {
+        let knowledge = try AmapPlaceKnowledge.bundled()
+
+        #expect(knowledge.sourceLabels.aroundTypecodeName == "amap_around_typecode_name")
+        #expect(knowledge.sourceLabels.aroundTypecode == "amap_around_typecode")
+        #expect(knowledge.sourceLabels.aroundNameKeyword == "amap_around_name_keyword")
+        #expect(knowledge.query.aroundTypePrefixes.contains("180000"))
+        #expect(knowledge.query.aroundTypePrefixes.contains("190000"))
+        #expect(knowledge.keywords.strongRules.contains { $0.placeType == "户外" })
+    }
+
+    @Test("AMap knowledge rejects invalid place type")
+    func amapKnowledgeRejectsInvalidPlaceType() throws {
+        try assertKnowledgeError(.invalidPlaceType("不存在")) { object in
+            var keywords = object["keywords"] as! [String: Any]
+            var strongRules = keywords["strongRules"] as! [[String: Any]]
+            strongRules[0]["placeType"] = "不存在"
+            keywords["strongRules"] = strongRules
+            object["keywords"] = keywords
+        }
+    }
+
+    @Test("AMap knowledge rejects empty source label")
+    func amapKnowledgeRejectsEmptySourceLabel() throws {
+        try assertKnowledgeError(.emptySourceLabel("aroundTypecode")) { object in
+            var sourceLabels = object["sourceLabels"] as! [String: Any]
+            sourceLabels["aroundTypecode"] = ""
+            object["sourceLabels"] = sourceLabels
+        }
+    }
+
+    @Test("AMap knowledge rejects invalid around query prefix")
+    func amapKnowledgeRejectsInvalidAroundPrefix() throws {
+        try assertKnowledgeError(.invalidAroundTypePrefix("15A000")) { object in
+            var query = object["query"] as! [String: Any]
+            var prefixes = query["aroundTypePrefixes"] as! [String]
+            prefixes[0] = "15A000"
+            query["aroundTypePrefixes"] = prefixes
+            object["query"] = query
+        }
+    }
+
+    @Test("AMap knowledge rejects unordered distance bands")
+    func amapKnowledgeRejectsUnorderedBands() throws {
+        try assertKnowledgeError(.unorderedBands("scoring.poiDistanceScoreBands")) { object in
+            var scoring = object["scoring"] as! [String: Any]
+            scoring["poiDistanceScoreBands"] = [
+                ["maxDistanceM": 100, "value": 0.34],
+                ["maxDistanceM": 50, "value": 0.42]
+            ]
+            object["scoring"] = scoring
+        }
+    }
+
+    @Test("AMap knowledge rejects conflicting thresholds")
+    func amapKnowledgeRejectsThresholdConflict() throws {
+        try assertKnowledgeError(.thresholdConflict("scoring.quality")) { object in
+            var scoring = object["scoring"] as! [String: Any]
+            var quality = scoring["quality"] as! [String: Any]
+            quality["minimumAvailableConfidence"] = 0.6
+            quality["exactOrGoodMinConfidence"] = 0.5
+            scoring["quality"] = quality
+            object["scoring"] = scoring
+        }
+    }
+
+    @Test("AMap absorbed legacy mappings cover outdoor beach and transit refinements")
+    func amapAbsorbedLegacyMappings() throws {
+        let cases: [(typecode: String, type: String, name: String, placeType: String)] = [
+            ("190301", "地名地址信息;自然地名;山", "测试自然地貌", "户外"),
+            ("190100", "地名地址信息;自然地名;海湾海峡", "测试海湾地貌", "海边"),
+            ("110201", "风景名胜;风景名胜;观景点", "测试风景区", "户外"),
+            ("150500", "交通设施服务;轻轨站", "测试轻轨站", "地铁站"),
+            ("180300", "道路附属设施;服务区", "测试服务区", "在途"),
+            ("150903", "交通设施服务;港口码头", "测试港口码头", "在途")
+        ]
+
+        for testCase in cases {
+            let candidate = NativePlaceTypeMapper.testCandidate(
+                typecode: testCase.typecode,
+                type: testCase.type,
+                name: testCase.name,
+                distance: 40
+            )
+            #expect(candidate.placeType == testCase.placeType)
+        }
+
+        let coastalPort = NativePlaceTypeMapper.testCandidate(
+            typecode: "150903",
+            type: "交通设施服务;港口码头",
+            name: "测试滨海码头",
+            distance: 40
+        )
+        let outdoorNameOnly = NativePlaceTypeMapper.testCandidate(
+            name: "测试观景台",
+            distance: 40
+        )
+
+        #expect(coastalPort.placeType == "海边")
+        #expect(outdoorNameOnly.placeType == "户外")
+        #expect(outdoorNameOnly.source == "amap_around_name_keyword")
+        #expect(outdoorNameOnly.confidence <= 0.55)
+    }
+
+    private func assertKnowledgeError(
+        _ expected: AmapPlaceKnowledgeError,
+        mutate: (inout [String: Any]) -> Void
+    ) throws {
+        var object = try bundledKnowledgeJSONObject()
+        mutate(&object)
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+
+        do {
+            _ = try AmapPlaceKnowledge.load(data: data)
+            Issue.record("Expected AMap knowledge validation to fail with \(expected).")
+        } catch let error as AmapPlaceKnowledgeError {
+            #expect(error == expected)
+        } catch {
+            Issue.record("Unexpected AMap knowledge validation error: \(error)")
+        }
+    }
+
+    private func bundledKnowledgeJSONObject() throws -> [String: Any] {
+        let data = try AmapPlaceKnowledge.bundledData()
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AmapPlaceKnowledgeError.bundledResourceMissing
+        }
+        return object
+    }
+
     @Test("unavailable place labels are not treated as captured POI lookups")
     func unavailablePlaceLabelDoesNotPretendPOIWasCaptured() async throws {
         let start = Date(timeIntervalSince1970: 7_500)

@@ -42,7 +42,7 @@ final class MappingAndRunIntegrationTests: XCTestCase {
                 "place_type": .string("写字楼"),
                 "confidence": .double(0.25),
                 "distance_m": .double(32),
-                "source": .string("amap_typecode_name"),
+                "source": .string("amap_around_typecode_name"),
                 "quality": .string("noisy_mapping")
             ])
         ]))
@@ -64,8 +64,8 @@ final class MappingAndRunIntegrationTests: XCTestCase {
             placeTypeConfidence: 0.74,
             placeTypeQuality: "exact_or_good_mapping",
             placeCandidates: [
-                PlaceCandidate(placeType: "运动场所", confidence: 0.74, distanceM: 32, source: "amap_typecode_name", quality: "exact_or_good_mapping"),
-                PlaceCandidate(placeType: "餐厅", confidence: 0.61, distanceM: 48, source: "amap_typecode", quality: "noisy_mapping"),
+                PlaceCandidate(placeType: "运动场所", confidence: 0.74, distanceM: 32, source: "amap_around_typecode_name", quality: "exact_or_good_mapping"),
+                PlaceCandidate(placeType: "餐厅", confidence: 0.61, distanceM: 48, source: "amap_around_typecode", quality: "noisy_mapping"),
             ],
             latitude: 31.2304,
             longitude: 121.4737,
@@ -90,14 +90,14 @@ final class MappingAndRunIntegrationTests: XCTestCase {
                 "place_type": .string("运动场所"),
                 "confidence": .double(0.74),
                 "distance_m": .double(32),
-                "source": .string("amap_typecode_name"),
+                "source": .string("amap_around_typecode_name"),
                 "quality": .string("exact_or_good_mapping")
             ]),
             .object([
                 "place_type": .string("餐厅"),
                 "confidence": .double(0.61),
                 "distance_m": .double(48),
-                "source": .string("amap_typecode"),
+                "source": .string("amap_around_typecode"),
                 "quality": .string("noisy_mapping")
             ])
         ]))
