@@ -28,3 +28,6 @@ backend/__pycache__/
 
 # Local frontend diagnostic exports
 frontend/logs/
+
+# Local recommendation export snapshots
+reco-poc-export-latest/
