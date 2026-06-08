@@ -19,7 +19,7 @@ from rule_scorer import RuleScorer
 from scenes import SCENE_NAME_TO_ID, SCENES, SCENE_NAMES
 
 
-MODEL_VERSION = "poc-2026-06-02-place-candidates"
+MODEL_VERSION = "poc-2026-06-08-soft-library-weights"
 
 
 class PlaceCandidate(BaseModel):
@@ -251,6 +251,17 @@ class RecommenderService:
                 raise HTTPException(status_code=500, detail=f"Unsupported POC_SEMANTIC={self.semantic_mode}")
         return self.semantic.score_all(context)
 
+    def _apply_soft_context_adjustments(self, final_scores: Dict[str, float], context: Dict[str, Any]) -> Dict[str, float]:
+        adjusted = dict(final_scores)
+        library_strength = self.rule.place_evidence_strength(context, "图书馆")
+        conflicting_strength = max(
+            self.rule.place_evidence_strength(context, place)
+            for place in ["商场", "餐厅", "运动场所", "在途", "地铁站", "高铁站", "机场"]
+        )
+        if library_strength < 0.15 and conflicting_strength >= 0.35:
+            adjusted["图书馆"] = adjusted.get("图书馆", 0.0) * 0.90
+        return adjusted
+
     def recommend(self, request: RecommendRequest) -> Dict[str, Any]:
         request_id = request.request_id or str(uuid.uuid4())
         context = _as_context_dict(request.context)
@@ -285,6 +296,7 @@ class RecommenderService:
             / total
             for scene in SCENE_NAMES
         }
+        final_scores = self._apply_soft_context_adjustments(final_scores, context)
         ranked = sorted(final_scores.items(), key=lambda x: x[1], reverse=True)[: request.top_k]
         recommendations = []
         for rank, (scene, score) in enumerate(ranked, start=1):
