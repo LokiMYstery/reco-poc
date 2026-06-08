@@ -50,7 +50,7 @@ struct HomeRunView: View {
             } header: {
                 Text("Full access recommendation")
             } footer: {
-                Text("Home shows only the full-access virtual user; open grouped results for all virtual users.")
+                Text("Home highlights the full-access virtual user; grouped results include the ad hoc run.")
             }
 
             Section {

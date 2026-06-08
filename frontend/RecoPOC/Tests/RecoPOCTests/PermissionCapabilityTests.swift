@@ -168,6 +168,15 @@ final class PermissionCapabilityTests: XCTestCase {
 
         XCTAssertEqual(model.homeScreen.featuredResult?.userTitle, "u_full_permission")
         XCTAssertTrue(model.homeScreen.canSelectTrueScenes)
+        XCTAssertEqual(api.recommendRequests.count, 2)
+
+        let resultUserTitles = model.resultsScreen.groups.map(\.userTitle)
+        XCTAssertEqual(resultUserTitles.count, 2)
+        XCTAssertTrue(resultUserTitles.contains("u_full_permission"))
+        XCTAssertEqual(resultUserTitles.filter { $0.hasPrefix("u_ad_hoc_") }.count, 1)
+        XCTAssertEqual(Set(api.recommendRequests.map(\.requestID)).count, 2)
+        XCTAssertTrue(api.recommendRequests.contains { $0.requestID.hasPrefix("req_u_full_permission_") })
+        XCTAssertTrue(api.recommendRequests.contains { $0.requestID.hasPrefix("req_u_ad_hoc_") })
 
         model.toggleTrueSceneSelection("阅读")
         model.toggleTrueSceneSelection("冥想")

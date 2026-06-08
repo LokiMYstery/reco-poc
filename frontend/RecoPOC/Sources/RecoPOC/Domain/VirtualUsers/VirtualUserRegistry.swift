@@ -27,18 +27,14 @@ public enum VirtualUserRegistry {
     }
 
     public static func users(for willingness: PermissionWillingness, questionnaire: QuestionnaireState, deviceUUID: String) -> [VirtualUser] {
-        var users = defaultUsers(deviceUUID: deviceUUID)
-        if !builtInDefinitions.contains(where: { $0.mask == willingness.asMask }) {
-            let key = StableIdentityDeriver.adHocVirtualUserKey(willingness: willingness, questionnaire: questionnaire)
-            users.append(VirtualUser(
-                key: key,
-                displayName: "自定义权限组合",
-                purpose: "被试当前 willingness/questionnaire 未命中内置组合",
-                mask: willingness.asMask,
-                userID: StableIdentityDeriver.userID(deviceUUID: deviceUUID, virtualUserKey: key)
-            ))
+        guard let fullPermission = builtInDefinitions.first(where: { $0.key == "u_full_permission" }) else {
+            preconditionFailure("Missing u_full_permission virtual user definition")
         }
-        return users
+
+        return [
+            materialize(fullPermission, deviceUUID: deviceUUID),
+            adHocUser(for: willingness, questionnaire: questionnaire, deviceUUID: deviceUUID)
+        ]
     }
 
     private static func materialize(_ definition: VirtualUserDefinition, deviceUUID: String) -> VirtualUser {
@@ -48,6 +44,17 @@ public enum VirtualUserRegistry {
             purpose: definition.purpose,
             mask: definition.mask,
             userID: StableIdentityDeriver.userID(deviceUUID: deviceUUID, virtualUserKey: definition.key)
+        )
+    }
+
+    private static func adHocUser(for willingness: PermissionWillingness, questionnaire: QuestionnaireState, deviceUUID: String) -> VirtualUser {
+        let key = StableIdentityDeriver.adHocVirtualUserKey(willingness: willingness, questionnaire: questionnaire)
+        return VirtualUser(
+            key: key,
+            displayName: "自定义权限组合",
+            purpose: "根据当前 willingness/questionnaire 派生的发送用户",
+            mask: willingness.asMask,
+            userID: StableIdentityDeriver.userID(deviceUUID: deviceUUID, virtualUserKey: key)
         )
     }
 }

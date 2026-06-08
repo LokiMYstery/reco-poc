@@ -162,18 +162,23 @@ final class DomainContractTests: XCTestCase {
         )
     }
 
-    func testBuiltInMaskDoesNotAddAdHocVirtualUser() {
+    func testDeliveryUsersIncludeFullPermissionAndAdHocWhenMaskMatchesBuiltIn() {
         let users = VirtualUserRegistry.users(
             for: .full,
             questionnaire: .sample,
             deviceUUID: "device-xyz"
         )
 
-        XCTAssertEqual(users.count, 16)
-        XCTAssertEqual(users.map(\.key), VirtualUserRegistry.builtInKeys)
+        XCTAssertEqual(users.count, 2)
+        XCTAssertEqual(users[0].key, "u_full_permission")
+        XCTAssertEqual(users[0].userID, "device-xyz:u_full_permission")
+        XCTAssertEqual(users[1].mask, PermissionWillingness.full.asMask)
+        XCTAssertTrue(users[1].key.hasPrefix("u_ad_hoc_"))
+        XCTAssertNotEqual(users[1].key, users[0].key)
+        XCTAssertEqual(users[1].userID, "device-xyz:\(users[1].key)")
     }
 
-    func testAdHocVirtualUserIsAddedWhenMaskDoesNotMatchBuiltIns() {
+    func testDeliveryUsersIncludeFullPermissionAndAdHocWhenMaskDoesNotMatchBuiltIns() {
         let willingness = PermissionWillingness(
             location: .approximate,
             motion: .none,
@@ -190,11 +195,26 @@ final class DomainContractTests: XCTestCase {
             deviceUUID: "device-xyz"
         )
 
-        XCTAssertEqual(users.count, 17)
-        guard let adHoc = users.last else {
-            return XCTFail("Expected ad hoc user")
-        }
+        XCTAssertEqual(users.count, 2)
+        XCTAssertEqual(users[0].key, "u_full_permission")
+        let adHoc = users[1]
         XCTAssertTrue(adHoc.key.hasPrefix("u_ad_hoc_"))
+        XCTAssertEqual(adHoc.mask, willingness.asMask)
         XCTAssertEqual(adHoc.userID, "device-xyz:\(adHoc.key)")
+    }
+
+    func testDeliveryUserRequestIDsRemainDistinguishableByVirtualUserKey() {
+        let users = VirtualUserRegistry.users(
+            for: .full,
+            questionnaire: .sample,
+            deviceUUID: "device-xyz"
+        )
+        let generator = TimestampRecommendationRequestIDGenerator()
+        let requestIDs = users.map { generator.nextRequestID(virtualUserKey: $0.key, snapshot: .sampleFullPermission) }
+
+        XCTAssertEqual(requestIDs.count, 2)
+        XCTAssertEqual(Set(requestIDs).count, 2)
+        XCTAssertTrue(requestIDs[0].hasPrefix("req_u_full_permission_"))
+        XCTAssertTrue(requestIDs[1].hasPrefix("req_u_ad_hoc_"))
     }
 }

@@ -347,10 +347,10 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             )
         }
 
-        if let matched = users.last(where: { $0.key.hasPrefix("u_ad_hoc_") }) {
-            setupScreen.derivedUserNote = "Latest willingness pattern needs an ad hoc virtual user placeholder for the next run: \(matched.key)."
+        if let matched = users.first(where: { $0.key.hasPrefix("u_ad_hoc_") }) {
+            setupScreen.derivedUserNote = "Latest willingness pattern will run as ad hoc virtual user: \(matched.key)."
         } else {
-            setupScreen.derivedUserNote = "Latest willingness pattern matches an existing built-in virtual user."
+            setupScreen.derivedUserNote = "Latest willingness pattern has no derived ad hoc virtual user."
         }
     }
 
@@ -853,7 +853,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             feedbackSubmitTitle: "Submit correction feedback",
             sensorSnapshotSummary: "Start a recommendation run to see the sensor inputs used for that request.",
             sensorSnapshotRows: [],
-            latestResultsSummary: "The full-access virtual user result appears here after the first run; feedback is submitted for all successful virtual users.",
+            latestResultsSummary: "The full-access virtual user result appears here after the first run; feedback is submitted for successful full-access and ad hoc results.",
             retryStatus: nil,
             canOpenResults: false
         )
@@ -873,20 +873,6 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
                         .init(rank: 1, sceneName: "放松", confidenceLabel: "0.81"),
                         .init(rank: 2, sceneName: "冥想", confidenceLabel: "0.67"),
                         .init(rank: 3, sceneName: "减压", confidenceLabel: "0.54")
-                    ],
-                    errorMessage: nil
-                ),
-                .init(
-                    id: "u_weak_cellular_commuter",
-                    userTitle: "u_weak_cellular_commuter",
-                    userSubtitle: "Weak cellular + transit-biased",
-                    requestStatus: "Success",
-                    topRecommendation: "通勤",
-                    latencyLabel: "921 ms",
-                    recommendations: [
-                        .init(rank: 1, sceneName: "通勤", confidenceLabel: "0.72"),
-                        .init(rank: 2, sceneName: "游戏", confidenceLabel: "0.50"),
-                        .init(rank: 3, sceneName: "阅读", confidenceLabel: "0.39")
                     ],
                     errorMessage: nil
                 ),
