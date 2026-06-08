@@ -72,7 +72,7 @@ Expected response:
 {
   "ok": true,
   "model_version": "poc-2026-06-02-place-candidates",
-  "semantic_mode": "none"
+  "semantic_mode": "embedding-proto"
 }
 ```
 

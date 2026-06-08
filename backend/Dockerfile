@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV POC_SEMANTIC=none
+ENV POC_SEMANTIC=embedding-proto
 ENV POC_SQLITE_PATH=/app/data/poc_music_scene.db
 ENV POC_PREFERENCE_PATH=/app/data/poc_preference.json
 

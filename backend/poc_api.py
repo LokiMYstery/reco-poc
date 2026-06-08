@@ -20,6 +20,7 @@ from scenes import SCENE_NAME_TO_ID, SCENES, SCENE_NAMES
 
 
 MODEL_VERSION = "poc-2026-06-02-place-candidates"
+DEFAULT_SEMANTIC_MODE = "embedding-proto"
 
 
 class PlaceCandidate(BaseModel):
@@ -112,6 +113,15 @@ def _normalize(scores: Dict[str, float]) -> Dict[str, float]:
     if hi - lo < 1e-9:
         return {scene: 0.5 for scene in scores}
     return {scene: (score - lo) / (hi - lo) for scene, score in scores.items()}
+
+
+def _semantic_mode_from_env() -> str:
+    raw = os.getenv("POC_SEMANTIC", DEFAULT_SEMANTIC_MODE).strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return DEFAULT_SEMANTIC_MODE
+    if raw in {"0", "false", "no", "off", "none", ""}:
+        return "none"
+    return raw
 
 
 def _as_context_dict(context: ContextPayload) -> Dict[str, Any]:
@@ -224,7 +234,7 @@ class RecommenderService:
         self.history = StableHistoryBooster(support_k=2.0)
         self.history.fit(self.storage.load_history_rows())
         self.semantic = None
-        self.semantic_mode = os.getenv("POC_SEMANTIC", "none")
+        self.semantic_mode = _semantic_mode_from_env()
 
     def _attach_geo_cluster(self, user_id: str, context: Dict[str, Any]) -> Dict[str, Any]:
         geo = self.storage.assign_geo_cluster(

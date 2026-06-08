@@ -69,7 +69,7 @@ final_score =
 
 ```text
 rule_weight = 0.58
-semantic_weight = 0.00
+semantic_weight = 0.12
 preference_weight = 0.18
 history_weight = 0.24
 ```
@@ -79,9 +79,9 @@ history_weight = 0.24
 - `rule_score`：当前上下文规则兜底。
 - `preference_score`：用户历史反馈在线学习。
 - `stable_history_score`：SQLite 历史行为分桶回退。
-- `semantic_score`：默认关闭，避免 POC 服务首次启动加载 embedding 模型太慢；需要时可开启。
+- `semantic_score`：默认开启，使用 MiniLM prototype embedding；首次推荐请求可能需要加载/下载模型。
 
-如需开启 MiniLM prototype embedding：
+如需显式开启 MiniLM prototype embedding：
 
 ```bash
 export POC_SEMANTIC=embedding-proto
@@ -90,6 +90,12 @@ export POC_SEMANTIC_WEIGHT=0.12
 export POC_PREFERENCE_WEIGHT=0.14
 export POC_HISTORY_WEIGHT=0.20
 uvicorn poc_api:app --host 0.0.0.0 --port 8000
+```
+
+如需临时关闭 semantic：
+
+```bash
+export POC_SEMANTIC=none
 ```
 
 ## 4. Endpoint 总览
@@ -179,7 +185,7 @@ uvicorn poc_api:app --host 0.0.0.0 --port 8000
   "request_id": "req_20260526_0001",
   "user_id": "u_001",
   "model_version": "poc-2026-06-02-place-candidates",
-  "semantic_mode": "none",
+  "semantic_mode": "embedding-proto",
   "weights": {
     "rule": 0.58,
     "semantic": 0.0,

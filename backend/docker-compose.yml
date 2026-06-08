@@ -7,7 +7,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      POC_SEMANTIC: "none"
+      POC_SEMANTIC: "embedding-proto"
       POC_SQLITE_PATH: /app/data/poc_music_scene.db
       POC_PREFERENCE_PATH: /app/data/poc_preference.json
     volumes:
