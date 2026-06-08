@@ -63,6 +63,7 @@ class RuleScorer:
         candidates = context.get("place_candidates")
         if isinstance(candidates, list) and candidates:
             evidence = []
+            overall_quality = _s(context.get("place_type_quality"))
             for rank, candidate in enumerate(candidates[:3]):
                 if not isinstance(candidate, dict):
                     continue
@@ -70,13 +71,19 @@ class RuleScorer:
                 confidence = _f(candidate.get("confidence"))
                 if not place or confidence <= 0:
                     continue
-                if _s(candidate.get("quality")) == "noisy_mapping":
-                    confidence = min(confidence, 0.35)
+                if _s(candidate.get("quality")) == "noisy_mapping" or overall_quality == "noisy_mapping":
+                    confidence = min(confidence, 0.45)
                 weight = min(0.85, confidence) * self.PLACE_CANDIDATE_RANK_WEIGHTS[rank]
                 evidence.append((place, weight))
             if evidence:
                 return evidence
         return [(_s(context.get("place_type")), self._place_weight(context))]
+
+    def place_evidence_strength(self, context: Dict[str, Any], place_name: str) -> float:
+        return max((weight for place, weight in self._place_evidence(context) if place == place_name), default=0.0)
+
+    def has_library_hint(self, context: Dict[str, Any]) -> bool:
+        return self.place_evidence_strength(context, "图书馆") >= 0.15
 
     def _apply_place_signal(self, scores, place: str, place_w: float):
         if place in {"图书馆"}:
@@ -106,6 +113,9 @@ class RuleScorer:
     def _sub(self, scores, scene, amount):
         scores[scene] = max(0.0, scores[scene] - amount)
 
+    def _scale(self, scores, scene, multiplier):
+        scores[scene] = max(0.0, min(1.0, scores[scene] * multiplier))
+
     def score_all(self, context: Dict[str, Any]) -> Dict[str, float]:
         scores = {scene: 0.08 for scene in self.scene_names}
 
@@ -130,6 +140,13 @@ class RuleScorer:
         hr_w = 0.45 if hr_quality == "stale_before_activity" else 1.0
         activity_available = self._available(context, "activity_state")
         hr_available = self._available(context, "heart_rate")
+        place_evidence = self._place_evidence(context)
+        library_hint = self.place_evidence_strength(context, "图书馆") >= 0.15
+        conflicting_place_hint = any(
+            candidate_place in {"商场", "餐厅", "运动场所", "在途", "地铁站", "高铁站", "机场"}
+            and candidate_weight >= 0.35
+            for candidate_place, candidate_weight in place_evidence
+        )
 
         # 时间是低权限且稳定的主干信号。
         if 23 <= hour or hour < 3:
@@ -145,13 +162,14 @@ class RuleScorer:
             self._add(scores, "通勤", 0.20)
         if 9 <= hour < 12 or 14 <= hour < 18:
             self._add(scores, "专注", 0.14)
-            self._add(scores, "图书馆", 0.08)
+            self._add(scores, "阅读", 0.03)
+            self._add(scores, "图书馆", 0.04 if library_hint else 0.015)
         if 19 <= hour < 23:
             self._add(scores, "放松", 0.12)
             self._add(scores, "游戏", 0.10)
 
         # 实时规则可以软融合 Top-3；地点始终只加分，不做硬判断。
-        for candidate_place, candidate_weight in self._place_evidence(context):
+        for candidate_place, candidate_weight in place_evidence:
             self._apply_place_signal(scores, candidate_place, candidate_weight)
 
         # 运动与步数：health权限缺失时，不扣分，只少加分。
@@ -167,8 +185,10 @@ class RuleScorer:
                 self._add(scores, "宠物陪伴", 0.08)
                 self._add(scores, "放松", 0.06)
             elif activity == "静止":
-                for scene in ["专注", "阅读", "图书馆", "深睡眠", "睡午觉", "冥想", "游戏"]:
+                for scene in ["专注", "阅读", "深睡眠", "睡午觉", "冥想", "游戏"]:
                     self._add(scores, scene, 0.07)
+                if library_hint:
+                    self._add(scores, "图书馆", 0.04)
 
         if steps >= 1200:
             self._add(scores, "跑步", 0.18)
@@ -189,8 +209,10 @@ class RuleScorer:
                 self._add(scores, "健身", 0.10 * hr_w)
                 self._add(scores, "减压", 0.10 * hr_w)
             elif hr == "静息":
-                for scene in ["专注", "阅读", "图书馆", "深睡眠", "睡午觉", "冥想", "放松"]:
+                for scene in ["专注", "阅读", "深睡眠", "睡午觉", "冥想", "放松"]:
                     self._add(scores, scene, 0.06)
+                if library_hint:
+                    self._add(scores, "图书馆", 0.04)
 
         if workout >= 20:
             self._add(scores, "健身", 0.12)
@@ -199,8 +221,9 @@ class RuleScorer:
 
         # 环境与连接是低权限弱信号。
         if noise == "安静":
-            for scene in ["图书馆", "阅读", "专注", "深睡眠", "冥想", "婴儿安睡"]:
+            for scene in ["阅读", "专注", "深睡眠", "冥想", "婴儿安睡"]:
                 self._add(scores, scene, 0.06)
+            self._add(scores, "图书馆", 0.04 if library_hint else 0.015)
         elif noise == "嘈杂":
             self._add(scores, "通勤", 0.06)
             self._add(scores, "健身", 0.06)
@@ -212,7 +235,7 @@ class RuleScorer:
             self._add(scores, "冥想", 0.06)
         elif light == "明亮":
             self._add(scores, "专注", 0.05)
-            self._add(scores, "图书馆", 0.05)
+            self._add(scores, "图书馆", 0.035 if library_hint else 0.01)
 
         if bluetooth == "车载蓝牙":
             self._add(scores, "通勤", 0.30)
@@ -277,9 +300,9 @@ class RuleScorer:
         if user_tag == "养宠物":
             self._add(scores, "宠物陪伴", 0.08)
         if user_tag == "学生":
-            self._add(scores, "图书馆", 0.12)
-            self._add(scores, "专注", 0.10)
-            self._add(scores, "阅读", 0.06)
+            self._add(scores, "图书馆", 0.08 if library_hint else 0.03)
+            self._add(scores, "专注", 0.11)
+            self._add(scores, "阅读", 0.07)
         if gender == "女性" or user_tag == "女性":
             self._add(scores, "经期舒缓", 0.05)
             self._add(scores, "胎教", 0.04)
@@ -335,9 +358,9 @@ class RuleScorer:
 
         if initial_need:
             if "学习" in initial_need or "工作" in initial_need or "专注" in initial_need:
-                self._add(scores, "专注", 0.08)
-                self._add(scores, "图书馆", 0.08)
-                self._add(scores, "阅读", 0.04)
+                self._add(scores, "专注", 0.10)
+                self._add(scores, "图书馆", 0.07 if library_hint else 0.03)
+                self._add(scores, "阅读", 0.06)
             if "情绪" in initial_need or "舒缓" in initial_need:
                 self._add(scores, "减压", 0.08)
                 if elevated_hr:
@@ -382,6 +405,10 @@ class RuleScorer:
 
         if not (12 <= hour < 15):
             self._sub(scores, "睡午觉", 0.08)
+
+        # 地点强烈指向非学习空间时，只做轻微降权，不禁止图书馆。
+        if conflicting_place_hint and not library_hint:
+            self._scale(scores, "图书馆", 0.82)
 
         return scores
 

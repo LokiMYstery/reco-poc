@@ -296,6 +296,94 @@
         "played_ratio_pct": 0.78,
         "next_action": "继续播放"
       }
+    },
+    {
+      "name": "non_library_quiet_student_not_library_top1",
+      "purpose": "PoC regression: quiet/still student context in restaurant-like mixed POI should not over-push library.",
+      "recommend": {
+        "user_id": "u_non_library_quiet_student",
+        "request_id": "smoke_non_library_quiet_student_001",
+        "top_k": 3,
+        "context": {
+          "timestamp": "2026-06-03T15:50:59+08:00",
+          "timezone": "Asia/Shanghai",
+          "hour": 15,
+          "weekday": 2,
+          "place_candidates": [
+            {
+              "place_type": "餐厅",
+              "confidence": 0.90,
+              "distance_m": 14.0,
+              "source": "mapkit_query_probe"
+            },
+            {
+              "place_type": "写字楼",
+              "confidence": 0.85,
+              "distance_m": 22.0,
+              "source": "nearby_poi"
+            },
+            {
+              "place_type": "运动场所",
+              "confidence": 0.82,
+              "distance_m": 28.0,
+              "source": "nearby_poi"
+            }
+          ],
+          "activity_state": "静止",
+          "activity_state_available": 1,
+          "heart_rate_zone": "稍高",
+          "heart_rate_available": 1,
+          "noise_class": "安静",
+          "light_class": "明亮",
+          "bluetooth": "扬声器",
+          "network": "wifi",
+          "user_tag": "学生",
+          "initial_needs": ["放松/减压"]
+        }
+      },
+      "feedback": {
+        "event_type": "correction",
+        "accepted_scene": "放松",
+        "dwell_time_sec": 10,
+        "played_ratio_pct": 0.05,
+        "next_action": "用户切换场景"
+      }
+    },
+    {
+      "name": "library_place_student_keeps_library_candidate",
+      "purpose": "Positive regression: strong library place evidence should still allow library recommendations.",
+      "recommend": {
+        "user_id": "u_library_place_student",
+        "request_id": "smoke_library_place_student_001",
+        "top_k": 3,
+        "context": {
+          "timestamp": "2026-06-03T15:20:00+08:00",
+          "timezone": "Asia/Shanghai",
+          "hour": 15,
+          "weekday": 2,
+          "place_type": "图书馆",
+          "place_type_available": 1,
+          "place_type_confidence": 0.86,
+          "place_type_quality": "exact_or_good_mapping",
+          "activity_state": "静止",
+          "activity_state_available": 1,
+          "heart_rate_zone": "静息",
+          "heart_rate_available": 1,
+          "noise_class": "安静",
+          "light_class": "明亮",
+          "bluetooth": "耳机",
+          "network": "wifi",
+          "user_tag": "学生",
+          "initial_needs": ["学习/工作专注"]
+        }
+      },
+      "feedback": {
+        "event_type": "listen",
+        "accepted_scene": "图书馆",
+        "dwell_time_sec": 480,
+        "played_ratio_pct": 0.81,
+        "next_action": "继续播放"
+      }
     }
   ]
 }

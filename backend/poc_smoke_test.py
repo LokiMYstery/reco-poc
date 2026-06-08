@@ -191,6 +191,13 @@ def run_smoke(client, cases: List[Dict[str, Any]], verbose: bool = False):
             notes = " ".join(response.get("availability_notes", []))
             require("place_type low confidence" in notes, "low_place_confidence: expected low-confidence place note")
 
+        if name == "non_library_quiet_student_not_library_top1":
+            require(top1 != "图书馆", f"{name}: 图书馆 should not be Top-1 without library-like place evidence")
+
+        if name == "library_place_student_keeps_library_candidate":
+            top3 = {item["scene"] for item in response["recommendations"]}
+            require("图书馆" in top3, f"{name}: expected 图书馆 in Top-3 when place evidence is library")
+
         if feedback_result and feedback.get("event_type") == "impression":
             require(feedback_result.get("learned") is False, f"{name}: impression should not update preference")
 
