@@ -129,6 +129,10 @@ place_type_quality = exact_or_good_mapping / noisy_mapping / unavailable
 |---|---|---:|---|---|
 | `activity_state` | string | 有权限则传 | `静止` / `慢速` / `中速` / `高速` | 运动/健康权限 |
 | `activity_state_available` | int | 建议 | `1` / `0` | 标记是否可用 |
+| `speed_mps` | float | 可选增强 | `4.2` | GPS/定位速度，单位 m/s |
+| `speed_accuracy_mps` | float | 可选 | `1.1` | 速度精度 |
+| `mobility_state` | string | 可选增强 | `vehicle_like` / `running` | 前端融合定位/系统运动后的移动状态 |
+| `motion_activity` | string | 可选 | `automotive` / `running` / `walking` | 系统运动识别原始标签 |
 | `heart_rate_zone` | string | 有权限则传 | `静息` / `稍高` / `高` / `波动` | 健康权限/手表 |
 | `heart_rate_available` | int | 建议 | `1` / `0` | 标记是否可用 |
 | `heart_rate_quality` | string | 可选 | `fresh` / `stale_before_activity` | 心率是否滞后 |
@@ -142,6 +146,15 @@ place_type_quality = exact_or_good_mapping / noisy_mapping / unavailable
 任意、静止、慢速、中速、高速
 ```
 
+如果 `activity_state` 由移动速度分桶得到，建议按以下阈值映射：
+
+```text
+< 0.5 m/s：静止
+0.5-2.5 m/s：慢速
+2.5-7.0 m/s：中速
+>= 7.0 m/s：高速
+```
+
 心率枚举：
 
 ```text
@@ -153,6 +166,9 @@ place_type_quality = exact_or_good_mapping / noisy_mapping / unavailable
 - 运动/心率拿不到很正常，传 `*_available=0` 即可。
 - 用户刚打开 App 时可能还没开始运动，心率不一定升高。
 - 后端不会因为没有心率而否定跑步/健身。
+- `在途` 是地点/上下文标签，不是 18 个最终推荐场景；最终推荐对应 `通勤`。
+- 速度桶不会被后端直接等同于场景：`中速` 需要配合步数、心率、workout、运动地点等证据才解释为跑步/健身；`高速` 默认更偏车行/通勤。
+- 移动中时，`写字楼`、`住宅区`、`餐厅`、`商场` 等路过 POI 会被后端降权，避免出租车/地铁路过时误判地点。
 
 ## 5. 环境字段
 
