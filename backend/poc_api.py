@@ -19,8 +19,7 @@ from rule_scorer import RuleScorer
 from scenes import SCENE_NAME_TO_ID, SCENES, SCENE_NAMES
 
 
-MODEL_VERSION = "poc-2026-06-08-soft-library-weights"
-DEFAULT_SEMANTIC_MODE = "embedding-proto"
+MODEL_VERSION = "poc-2026-06-09-mobility-aware"
 
 
 class PlaceCandidate(BaseModel):
@@ -58,6 +57,10 @@ class ContextPayload(BaseModel):
 
     activity_state: Optional[str] = None
     activity_state_available: Optional[int] = None
+    speed_mps: Optional[float] = Field(None, ge=0.0, description="Optional GPS/device speed in meters per second")
+    speed_accuracy_mps: Optional[float] = Field(None, ge=0.0)
+    mobility_state: Optional[str] = Field(None, description="Optional mobility label, e.g. stationary/walking/running/vehicle_like")
+    motion_activity: Optional[str] = Field(None, description="Optional platform motion label, e.g. automotive/running/walking")
     heart_rate_zone: Optional[str] = None
     heart_rate_available: Optional[int] = None
     heart_rate_quality: Optional[str] = None
@@ -113,22 +116,6 @@ def _normalize(scores: Dict[str, float]) -> Dict[str, float]:
     if hi - lo < 1e-9:
         return {scene: 0.5 for scene in scores}
     return {scene: (score - lo) / (hi - lo) for scene, score in scores.items()}
-
-
-def _semantic_mode_from_env() -> str:
-    raw = os.getenv("POC_SEMANTIC", DEFAULT_SEMANTIC_MODE).strip().lower()
-    if raw in {"1", "true", "yes", "on"}:
-        return DEFAULT_SEMANTIC_MODE
-    if raw in {"0", "false", "no", "off", "none", ""}:
-        return "none"
-    return raw
-
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _as_context_dict(context: ContextPayload) -> Dict[str, Any]:
@@ -241,39 +228,7 @@ class RecommenderService:
         self.history = StableHistoryBooster(support_k=2.0)
         self.history.fit(self.storage.load_history_rows())
         self.semantic = None
-        self.semantic_mode = _semantic_mode_from_env()
-        self.semantic_warmup_status = "not_started"
-
-    def warmup_semantic(self) -> Dict[str, Any]:
-        """Eagerly load semantic scorer/model so the first user request is not the cold path."""
-        if self.semantic_mode in {"", "none", "off"}:
-            self.semantic_warmup_status = "disabled"
-            return {"semantic_mode": self.semantic_mode, "status": self.semantic_warmup_status}
-
-        context = {
-            "hour": 12,
-            "weekday": 1,
-            "time_slot": "中午",
-            "place_type": "住宅区",
-            "place_type_available": 1,
-            "place_type_confidence": 0.75,
-            "place_type_quality": "exact_or_good_mapping",
-            "activity_state": "静止",
-            "activity_state_available": 1,
-            "heart_rate_zone": "静息",
-            "heart_rate_available": 1,
-            "noise_class": "普通",
-            "bluetooth": "耳机",
-            "network": "wifi",
-            "initial_need": "放松/减压",
-        }
-        scores = self._semantic_scores(context)
-        self.semantic_warmup_status = "ready"
-        return {
-            "semantic_mode": self.semantic_mode,
-            "status": self.semantic_warmup_status,
-            "scene_count": len(scores),
-        }
+        self.semantic_mode = os.getenv("POC_SEMANTIC", "none")
 
     def _attach_geo_cluster(self, user_id: str, context: Dict[str, Any]) -> Dict[str, Any]:
         geo = self.storage.assign_geo_cluster(
@@ -452,22 +407,7 @@ app = FastAPI(title="Music Scene Recommendation POC API", version=MODEL_VERSION)
 
 @app.get("/health")
 def health():
-    return {
-        "ok": True,
-        "model_version": MODEL_VERSION,
-        "semantic_mode": service.semantic_mode,
-        "semantic_warmup": service.semantic_warmup_status,
-    }
-
-
-@app.on_event("startup")
-def startup_warmup():
-    if not _env_flag("POC_SEMANTIC_WARMUP", default=True):
-        service.semantic_warmup_status = "skipped"
-        print("semantic startup warmup skipped by POC_SEMANTIC_WARMUP")
-        return
-    summary = service.warmup_semantic()
-    print(f"semantic startup warmup complete: {summary}")
+    return {"ok": True, "model_version": MODEL_VERSION, "semantic_mode": service.semantic_mode}
 
 
 @app.get("/v1/scenes")

@@ -384,6 +384,156 @@
         "played_ratio_pct": 0.81,
         "next_action": "继续播放"
       }
+    },
+    {
+      "name": "taxi_high_speed_pass_by_poi",
+      "purpose": "Mobility regression: high-speed taxi movement should downweight pass-by POIs and favor commute.",
+      "recommend": {
+        "user_id": "u_taxi_high_speed",
+        "request_id": "smoke_taxi_high_speed_001",
+        "top_k": 3,
+        "context": {
+          "timestamp": "2026-06-09T15:10:00+08:00",
+          "timezone": "Asia/Shanghai",
+          "hour": 15,
+          "weekday": 1,
+          "place_candidates": [
+            {
+              "place_type": "写字楼",
+              "confidence": 0.61,
+              "distance_m": 114.0,
+              "source": "amap_around_typecode_name",
+              "quality": "noisy_mapping"
+            },
+            {
+              "place_type": "在途",
+              "confidence": 0.56,
+              "distance_m": 102.0,
+              "source": "amap_around_typecode_name",
+              "quality": "noisy_mapping"
+            },
+            {
+              "place_type": "住宅区",
+              "confidence": 0.32,
+              "distance_m": 165.0,
+              "source": "amap_around_typecode_name",
+              "quality": "noisy_mapping"
+            }
+          ],
+          "latitude": 31.17079,
+          "longitude": 121.5793,
+          "location_accuracy_m": 9.0,
+          "activity_state": "高速",
+          "activity_state_available": 1,
+          "speed_mps": 9.2,
+          "mobility_state": "vehicle_like",
+          "steps_last_10min": 35,
+          "heart_rate_zone": "静息",
+          "heart_rate_available": 1,
+          "noise_class": "普通",
+          "bluetooth": "耳机",
+          "network": "wifi"
+        }
+      },
+      "feedback": {
+        "event_type": "listen",
+        "accepted_scene": "通勤",
+        "dwell_time_sec": 300,
+        "played_ratio_pct": 0.72,
+        "next_action": "继续播放"
+      }
+    },
+    {
+      "name": "taxi_medium_speed_transit_candidate",
+      "purpose": "Mobility regression: screenshot-like medium-speed taxi context with transit in Top-2 should favor commute.",
+      "recommend": {
+        "user_id": "u_taxi_medium_speed",
+        "request_id": "smoke_taxi_medium_speed_001",
+        "top_k": 3,
+        "context": {
+          "timestamp": "2026-06-09T15:12:00+08:00",
+          "timezone": "Asia/Shanghai",
+          "hour": 15,
+          "weekday": 1,
+          "place_candidates": [
+            {
+              "place_type": "写字楼",
+              "confidence": 0.61,
+              "distance_m": 114.0,
+              "source": "amap_around_typecode_name",
+              "quality": "noisy_mapping"
+            },
+            {
+              "place_type": "在途",
+              "confidence": 0.56,
+              "distance_m": 102.0,
+              "source": "amap_around_typecode_name",
+              "quality": "noisy_mapping"
+            },
+            {
+              "place_type": "住宅区",
+              "confidence": 0.32,
+              "distance_m": 165.0,
+              "source": "amap_around_typecode_name",
+              "quality": "noisy_mapping"
+            }
+          ],
+          "latitude": 31.17079,
+          "longitude": 121.5793,
+          "location_accuracy_m": 9.0,
+          "activity_state": "中速",
+          "activity_state_available": 1,
+          "steps_last_10min": 35,
+          "heart_rate_zone": "静息",
+          "heart_rate_available": 1,
+          "noise_class": "普通",
+          "bluetooth": "耳机",
+          "network": "wifi"
+        }
+      },
+      "feedback": {
+        "event_type": "listen",
+        "accepted_scene": "通勤",
+        "dwell_time_sec": 300,
+        "played_ratio_pct": 0.72,
+        "next_action": "继续播放"
+      }
+    },
+    {
+      "name": "running_medium_speed_supported_by_exercise",
+      "purpose": "Mobility regression: medium speed plus steps, HR, workout, and outdoor place should favor running.",
+      "recommend": {
+        "user_id": "u_running_medium_speed",
+        "request_id": "smoke_running_medium_speed_001",
+        "top_k": 3,
+        "context": {
+          "timestamp": "2026-06-09T07:20:00+08:00",
+          "timezone": "Asia/Shanghai",
+          "hour": 7,
+          "weekday": 1,
+          "place_type": "公园",
+          "place_type_available": 1,
+          "place_type_confidence": 0.82,
+          "place_type_quality": "exact_or_good_mapping",
+          "activity_state": "中速",
+          "activity_state_available": 1,
+          "speed_mps": 4.2,
+          "steps_last_10min": 1350,
+          "heart_rate_zone": "高",
+          "heart_rate_available": 1,
+          "recent_workout_minutes_24h": 25,
+          "noise_class": "普通",
+          "bluetooth": "耳机",
+          "network": "wifi"
+        }
+      },
+      "feedback": {
+        "event_type": "listen",
+        "accepted_scene": "跑步",
+        "dwell_time_sec": 900,
+        "played_ratio_pct": 0.86,
+        "next_action": "继续播放"
+      }
     }
   ]
 }

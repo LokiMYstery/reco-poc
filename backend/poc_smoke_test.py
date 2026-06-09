@@ -198,6 +198,15 @@ def run_smoke(client, cases: List[Dict[str, Any]], verbose: bool = False):
             top3 = {item["scene"] for item in response["recommendations"]}
             require("图书馆" in top3, f"{name}: expected 图书馆 in Top-3 when place evidence is library")
 
+        if name == "taxi_high_speed_pass_by_poi":
+            require(top1 == "通勤", f"{name}: expected high-speed pass-by POI context to rank 通勤 first, got {top1}")
+
+        if name == "taxi_medium_speed_transit_candidate":
+            require(top1 == "通勤", f"{name}: expected medium-speed transit candidate context to rank 通勤 first, got {top1}")
+
+        if name == "running_medium_speed_supported_by_exercise":
+            require(top1 == "跑步", f"{name}: expected medium-speed exercise evidence to rank 跑步 first, got {top1}")
+
         if feedback_result and feedback.get("event_type") == "impression":
             require(feedback_result.get("learned") is False, f"{name}: impression should not update preference")
 

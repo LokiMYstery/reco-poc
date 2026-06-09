@@ -69,7 +69,7 @@ final_score =
 
 ```text
 rule_weight = 0.58
-semantic_weight = 0.12
+semantic_weight = 0.00
 preference_weight = 0.18
 history_weight = 0.24
 ```
@@ -79,9 +79,9 @@ history_weight = 0.24
 - `rule_score`：当前上下文规则兜底。
 - `preference_score`：用户历史反馈在线学习。
 - `stable_history_score`：SQLite 历史行为分桶回退。
-- `semantic_score`：默认开启，使用 MiniLM prototype embedding；首次推荐请求可能需要加载/下载模型。
+- `semantic_score`：默认关闭，避免 POC 服务首次启动加载 embedding 模型太慢；需要时可开启。
 
-如需显式开启 MiniLM prototype embedding：
+如需开启 MiniLM prototype embedding：
 
 ```bash
 export POC_SEMANTIC=embedding-proto
@@ -90,12 +90,6 @@ export POC_SEMANTIC_WEIGHT=0.12
 export POC_PREFERENCE_WEIGHT=0.14
 export POC_HISTORY_WEIGHT=0.20
 uvicorn poc_api:app --host 0.0.0.0 --port 8000
-```
-
-如需临时关闭 semantic：
-
-```bash
-export POC_SEMANTIC=none
 ```
 
 ## 4. Endpoint 总览
@@ -185,7 +179,7 @@ export POC_SEMANTIC=none
   "request_id": "req_20260526_0001",
   "user_id": "u_001",
   "model_version": "poc-2026-06-02-place-candidates",
-  "semantic_mode": "embedding-proto",
+  "semantic_mode": "none",
   "weights": {
     "rule": 0.58,
     "semantic": 0.0,
@@ -337,6 +331,7 @@ network
 bluetooth
 place_type + place_type_confidence
 activity_state_available + activity_state
+speed_mps / mobility_state（可选，推荐用于在途/跑步区分）
 heart_rate_available + heart_rate_zone
 ```
 
@@ -354,6 +349,8 @@ place_type_confidence
 ```
 
 后端不会因为缺失健康字段而扣分。
+
+`activity_state` 如果按移动速度分桶，后端按 `<0.5=静止`、`0.5-2.5=慢速`、`2.5-7.0=中速`、`>=7.0=高速` 解释。速度桶只是 mobility 证据，不直接等同于场景：中速需要结合步数、心率、workout、运动地点才解释为跑步/健身；高速默认更偏通勤/车行。`在途` 是上下文地点标签，最终推荐场景对应 `通勤`。
 
 ## 9. 多 user_id / 多权限场景模拟
 

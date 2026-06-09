@@ -305,13 +305,41 @@ class PreferenceScorer:
         bt = context.get("bluetooth", context.get("bluetooth_device", ""))
         app = context.get("app_event", "")
         cal = context.get("calendar_title", context.get("calendar_keyword", ""))
+        def num(value, default=0.0):
+            try:
+                text = str(value or "").strip()
+                return float(text) if text and text.lower() != "nan" else default
+            except ValueError:
+                return default
+
+        steps = int(num(context.get("steps_last_10min")))
+        workout = int(num(context.get("recent_workout_minutes_24h")))
+        speed = num(context.get("speed_mps"), -1.0)
+        vehicle_like = speed >= 7.0 or activity == "高速" or context.get("mobility_state") in {"vehicle_like", "automotive", "in_vehicle", "transit"}
+        exercise_supported = (
+            place in {"运动场所", "公园", "户外", "海边"}
+            or steps >= 500
+            or workout >= 10
+            or hr in {"稍高", "高", "波动"}
+            or any(k in app for k in ["运动", "健身", "跑步", "训练"])
+            or any(k in cal for k in ["运动", "健身", "跑步", "训练"])
+        )
 
         score = 0.0
-        if scene == "通勤" and (place in {"在途", "地铁站", "高铁站", "机场"} or bt == "车载蓝牙" or "导航" in app):
+        if scene == "通勤" and (
+            place in {"在途", "地铁站", "高铁站", "机场"}
+            or bt == "车载蓝牙"
+            or "导航" in app
+            or vehicle_like
+        ):
             score += 0.18
-        if scene == "跑步" and activity == "高速" and hr in {"高", "波动"}:
+        if scene == "跑步" and activity in {"中速", "高速"} and exercise_supported and (not vehicle_like or steps >= 1200 or workout >= 10):
             score += 0.20
-        if scene == "健身" and ("健身" in cal or "健身" in app or (activity in {"中速", "高速"} and hr in {"稍高", "高"})):
+        if scene == "健身" and (
+            "健身" in cal
+            or "健身" in app
+            or (activity in {"中速", "高速"} and exercise_supported and hr in {"稍高", "高", "波动"})
+        ):
             score += 0.16
         if scene == "图书馆" and place == "图书馆" and noise == "安静":
             score += 0.20

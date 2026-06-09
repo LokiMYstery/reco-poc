@@ -39,6 +39,9 @@ class RuleScorer:
     """对18个场景输出0-1规则分。"""
 
     PLACE_CANDIDATE_RANK_WEIGHTS = (1.0, 0.45, 0.20)
+    TRANSIT_PLACES = {"在途", "地铁站", "高铁站", "机场"}
+    EXERCISE_PLACES = {"运动场所", "公园", "户外", "海边"}
+    PASS_BY_PLACES = {"写字楼", "住宅区", "餐厅", "商场", "酒店"}
 
     def __init__(self):
         self.scene_names = SCENE_NAMES
@@ -84,6 +87,100 @@ class RuleScorer:
 
     def has_library_hint(self, context: Dict[str, Any]) -> bool:
         return self.place_evidence_strength(context, "图书馆") >= 0.15
+
+    def _mobility_bucket(self, context: Dict[str, Any], fallback_activity: str) -> str:
+        speed = _f(context.get("speed_mps"), -1.0)
+        if speed >= 0:
+            if speed < 0.5:
+                return "静止"
+            if speed < 2.5:
+                return "慢速"
+            if speed < 7.0:
+                return "中速"
+            return "高速"
+        return fallback_activity
+
+    def _max_place_strength(self, evidence, places) -> float:
+        return max((weight for place, weight in evidence if place in places), default=0.0)
+
+    def _adjust_place_evidence_for_mobility(self, evidence, mobility: str, exercise_evidence: float):
+        if mobility not in {"中速", "高速"}:
+            return evidence
+        adjusted = []
+        for place, weight in evidence:
+            if place in self.TRANSIT_PLACES:
+                adjusted.append((place, weight))
+                continue
+            if place in self.PASS_BY_PLACES:
+                weight *= 0.45 if mobility == "高速" else 0.65
+            elif place in self.EXERCISE_PLACES and mobility == "高速" and exercise_evidence < 0.55:
+                weight *= 0.70
+            adjusted.append((place, weight))
+        return adjusted
+
+    def _evidence_scores(
+        self,
+        context: Dict[str, Any],
+        place_evidence,
+        mobility: str,
+        hr: str,
+        steps: int,
+        workout: int,
+        bluetooth: str,
+        hour: int,
+        network: str,
+        app: str,
+        calendar: str,
+    ):
+        speed = _f(context.get("speed_mps"), -1.0)
+        mobility_state = _s(context.get("mobility_state"))
+        motion_activity = _s(context.get("motion_activity"))
+        transit_place = self._max_place_strength(place_evidence, self.TRANSIT_PLACES)
+        exercise_place = self._max_place_strength(place_evidence, self.EXERCISE_PLACES)
+
+        transit = 0.0
+        exercise = 0.0
+
+        if transit_place >= 0.15:
+            transit += 0.25 + 0.45 * transit_place
+        if bluetooth == "车载蓝牙":
+            transit += 0.35
+        if mobility_state in {"vehicle_like", "automotive", "in_vehicle", "transit"} or motion_activity in {"automotive", "in_vehicle"}:
+            transit += 0.42
+        if speed >= 7.0 or mobility == "高速":
+            transit += 0.34
+        elif mobility == "中速" and steps < 250:
+            transit += 0.14
+        if 7 <= hour < 10 or 17 <= hour < 20:
+            transit += 0.12
+        if network in {"蜂窝数据", "蜂窝数据（弱）"}:
+            transit += 0.04
+        if "导航" in app:
+            transit += 0.18
+
+        if exercise_place >= 0.15:
+            exercise += 0.20 + 0.35 * exercise_place
+        if mobility == "中速":
+            exercise += 0.18
+        elif mobility == "高速":
+            # 7m/s 以上日常更像车行；只有强运动证据时才允许解释为冲刺/高强度训练。
+            exercise += 0.06
+        if steps >= 1200:
+            exercise += 0.32
+        elif steps >= 500:
+            exercise += 0.16
+        if hr in {"高", "波动"}:
+            exercise += 0.24
+        elif hr == "稍高":
+            exercise += 0.12
+        if workout >= 20:
+            exercise += 0.24
+        elif workout >= 10:
+            exercise += 0.12
+        if any(k in app for k in ["运动", "健身", "跑步", "训练"]) or any(k in calendar for k in ["运动", "健身", "跑步", "训练"]):
+            exercise += 0.18
+
+        return min(1.0, transit), min(1.0, exercise)
 
     def _apply_place_signal(self, scores, place: str, place_w: float):
         if place in {"图书馆"}:
@@ -141,6 +238,22 @@ class RuleScorer:
         activity_available = self._available(context, "activity_state")
         hr_available = self._available(context, "heart_rate")
         place_evidence = self._place_evidence(context)
+        mobility = self._mobility_bucket(context, activity)
+        mobility_available = activity_available or _f(context.get("speed_mps"), -1.0) >= 0 or bool(_s(context.get("mobility_state")))
+        transit_evidence, exercise_evidence = self._evidence_scores(
+            context,
+            place_evidence,
+            mobility,
+            hr,
+            steps,
+            workout,
+            bluetooth,
+            hour,
+            network,
+            app,
+            calendar,
+        )
+        place_evidence = self._adjust_place_evidence_for_mobility(place_evidence, mobility, exercise_evidence)
         library_hint = self.place_evidence_strength(context, "图书馆") >= 0.15
         conflicting_place_hint = any(
             candidate_place in {"商场", "餐厅", "运动场所", "在途", "地铁站", "高铁站", "机场"}
@@ -172,28 +285,38 @@ class RuleScorer:
         for candidate_place, candidate_weight in place_evidence:
             self._apply_place_signal(scores, candidate_place, candidate_weight)
 
-        # 运动与步数：health权限缺失时，不扣分，只少加分。
-        if activity_available:
-            if activity == "高速":
-                self._add(scores, "跑步", 0.32)
-                self._add(scores, "健身", 0.14)
-            elif activity == "中速":
-                self._add(scores, "健身", 0.22)
-                self._add(scores, "通勤", 0.10)
-            elif activity == "慢速":
+        # 速度桶是 mobility 证据，不直接等同于身体运动。
+        if mobility_available:
+            if mobility == "高速":
+                self._add(scores, "通勤", 0.16 + 0.22 * transit_evidence)
+                if exercise_evidence >= 0.65 and exercise_evidence > transit_evidence + 0.15:
+                    self._add(scores, "跑步", 0.16)
+                    self._add(scores, "健身", 0.06)
+                else:
+                    self._sub(scores, "跑步", 0.08)
+            elif mobility == "中速":
+                if exercise_evidence >= 0.45 and exercise_evidence >= transit_evidence:
+                    self._add(scores, "跑步", 0.20)
+                    self._add(scores, "健身", 0.14)
+                if transit_evidence >= 0.30:
+                    self._add(scores, "通勤", 0.12 + 0.14 * transit_evidence)
+                elif exercise_evidence < 0.45:
+                    self._add(scores, "通勤", 0.06)
+            elif mobility == "慢速":
                 self._add(scores, "通勤", 0.12)
                 self._add(scores, "宠物陪伴", 0.08)
                 self._add(scores, "放松", 0.06)
-            elif activity == "静止":
+            elif mobility == "静止":
                 for scene in ["专注", "阅读", "深睡眠", "睡午觉", "冥想", "游戏"]:
                     self._add(scores, scene, 0.07)
                 if library_hint:
                     self._add(scores, "图书馆", 0.04)
 
         if steps >= 1200:
-            self._add(scores, "跑步", 0.18)
+            self._add(scores, "跑步", 0.18 if exercise_evidence >= transit_evidence else 0.08)
         elif steps >= 500:
-            self._add(scores, "通勤", 0.08)
+            if transit_evidence >= 0.45:
+                self._add(scores, "通勤", 0.08)
             self._add(scores, "健身", 0.08)
 
         # 心率不能作为运动开始前的必要条件，所以只加分，不强扣分。
@@ -314,7 +437,7 @@ class RuleScorer:
         # 缺少高权限信号时，使用稳定的组合特征做细分。
         at_home_like = place in {"住宅区", "酒店"} or place_w == 0
         quietish = noise in {"", "安静", "普通"}
-        staticish = activity in {"", "任意", "静止"} or not activity_available
+        staticish = mobility in {"", "任意", "静止"} or not mobility_available
         low_light = light in {"暗光", "室内柔光", ""}
         calm_hr = hr in {"", "任意", "静息"} or not hr_available
         elevated_hr = hr in {"稍高", "波动", "高"}
@@ -350,10 +473,10 @@ class RuleScorer:
             if user_tag == "母婴用户" and calm_hr and (12 <= hour < 15 or 20 <= hour < 23):
                 self._add(scores, "婴儿安睡", 0.12)
 
-        if quietish and calm_hr and workout >= 15 and activity in {"静止", "慢速", "任意", ""} and (6 <= hour < 9 or 19 <= hour < 22):
+        if quietish and calm_hr and workout >= 15 and mobility in {"静止", "慢速", "任意", ""} and (6 <= hour < 9 or 19 <= hour < 22):
             self._add(scores, "瑜伽", 0.22)
 
-        if quietish and activity in {"静止", "慢速", "任意", ""} and place in {"住宅区", "公园", "户外", "商场", "运动场所", ""} and (6 <= hour < 9 or 19 <= hour < 22):
+        if quietish and mobility in {"静止", "慢速", "任意", ""} and place in {"住宅区", "公园", "户外", "商场", "运动场所", ""} and (6 <= hour < 9 or 19 <= hour < 22):
             self._add(scores, "瑜伽", 0.10)
 
         if initial_need:
@@ -395,7 +518,7 @@ class RuleScorer:
                 self._add(scores, "阅读", 0.12)
                 self._add(scores, "专注", 0.04)
             if "陪伴" in initial_need:
-                if place in {"住宅区", "公园", "户外"} or activity == "慢速":
+                if place in {"住宅区", "公园", "户外"} or mobility == "慢速":
                     self._add(scores, "宠物陪伴", 0.10)
                 self._add(scores, "放松", 0.06)
 
