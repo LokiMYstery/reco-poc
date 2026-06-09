@@ -536,7 +536,9 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
     }
 
     private func sensorSnapshotRows(from snapshot: RawSensorSnapshot) -> [SensorSnapshotRowModel] {
-        [
+        let movementState = snapshot.movementState()
+        let refinedPlace = Self.fullAccessRefinedPlace(from: snapshot)
+        return [
             SensorSnapshotRowModel(
                 id: "captured_time",
                 title: "Captured time",
@@ -564,12 +566,15 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             SensorSnapshotRowModel(
                 id: "place",
                 title: "Place",
-                value: Self.placeValue(from: snapshot),
+                value: Self.placeValue(from: refinedPlace),
                 detail: Self.detail([
+                    "raw \(Self.placeValue(from: snapshot))",
                     "available \(snapshot.placeTypeAvailable ? "yes" : "no")",
-                    "confidence \(Self.percent(snapshot.placeTypeConfidence))",
-                    "quality \(snapshot.placeTypeQuality)",
-                    Self.sensorFieldString(for: .location, key: "place_source", in: snapshot).map { "source \($0)" },
+                    "refined confidence \(Self.percent(refinedPlace.placeTypeConfidence))",
+                    "refined quality \(refinedPlace.placeTypeQuality)",
+                    "raw confidence \(Self.percent(snapshot.placeTypeConfidence))",
+                    "raw quality \(snapshot.placeTypeQuality)",
+                    snapshot.placeSource.map { "source \($0)" },
                     Self.sensorFieldInt(for: .location, key: "poi_lookup_available", in: snapshot).map { "poi lookup \($0 > 0 ? "yes" : "no")" },
                 ] + Self.placeCandidateDetails(from: snapshot))
             ),
@@ -584,10 +589,13 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
             ),
             SensorSnapshotRowModel(
                 id: "activity",
-                title: "Activity",
-                value: snapshot.activityState,
+                title: "Movement",
+                value: movementState.displayValue,
                 detail: Self.detail([
-                    "available \(snapshot.activityStateAvailable ? "yes" : "no")",
+                    "backend activity_state \(snapshot.activityState)",
+                    snapshot.rawMotionActivity.map { "raw motion \($0)" },
+                    "speed quality \(snapshot.speedQuality)",
+                    "activity available \(snapshot.activityStateAvailable ? "yes" : "no")",
                     "motion status \(Self.availabilityLabel(for: .motion, in: snapshot))",
                 ])
             ),
@@ -650,7 +658,7 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
 
     private func sensorStatuses(from snapshot: RawSensorSnapshot?) -> [SensorStatusRowModel] {
         guard let snapshot else { return diagnosticsScreen.sensorStatuses }
-        return snapshot.statuses.keys.sorted().map { key in
+        let providerRows = snapshot.statuses.keys.sorted().map { key in
             let status = snapshot.statuses[key]
             return SensorStatusRowModel(
                 id: key,
@@ -659,6 +667,22 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
                 durationLabel: status?.message ?? "captured"
             )
         }
+        let movementState = snapshot.movementState()
+        let refinedPlace = Self.fullAccessRefinedPlace(from: snapshot)
+        return providerRows + [
+            SensorStatusRowModel(
+                id: "refined_place",
+                title: "Refined place",
+                status: refinedPlace.placeType,
+                durationLabel: "\(refinedPlace.placeTypeQuality); raw=\(snapshot.placeType)"
+            ),
+            SensorStatusRowModel(
+                id: "movement",
+                title: "Movement",
+                status: movementState.displayValue,
+                durationLabel: "speed_quality=\(snapshot.speedQuality); backend_activity_state=\(snapshot.activityState)"
+            )
+        ]
     }
 
     private func timingEvents(from events: [TimingEvent]) -> [TimingEventRowModel] {
@@ -741,6 +765,27 @@ final class DemoRecoPOCAppModel: RecoPOCAppModeling {
         return candidates
             .map { "\($0.placeType) \(Self.percent($0.confidence))" }
             .joined(separator: " · ")
+    }
+
+    private static func placeValue(from place: RefinedPlace) -> String {
+        let candidates = Array(place.placeCandidates.prefix(3))
+        guard !candidates.isEmpty else { return place.placeType }
+        return candidates
+            .map { "\($0.placeType) \(Self.percent($0.confidence))" }
+            .joined(separator: " · ")
+    }
+
+    private static func fullAccessRefinedPlace(from snapshot: RawSensorSnapshot) -> RefinedPlace {
+        PlaceTransitRefiner.refine(
+            placeType: snapshot.placeType,
+            placeTypeAvailable: snapshot.placeTypeAvailable,
+            placeTypeConfidence: snapshot.placeTypeConfidence,
+            placeTypeQuality: snapshot.placeTypeQuality,
+            placeSource: snapshot.placeSource,
+            placeCandidates: snapshot.placeCandidates,
+            movementState: snapshot.movementState(),
+            rawMotionActivity: snapshot.rawMotionActivity
+        )
     }
 
     private static func placeCandidateDetails(from snapshot: RawSensorSnapshot) -> [String?] {

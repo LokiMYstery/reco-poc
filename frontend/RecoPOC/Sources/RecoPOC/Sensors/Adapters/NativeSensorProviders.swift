@@ -273,7 +273,14 @@ public struct SystemLocationSnapshotProvider: LocationSnapshotProviding, Locatio
             classify: { report in
                 switch report.outcome {
                 case .success(let location):
-                    return (.available, nil, "accuracy_m=\(Int(max(0, location.horizontalAccuracy.rounded())))")
+                    return (
+                        .available,
+                        nil,
+                        [
+                            "accuracy_m=\(Int(max(0, location.horizontalAccuracy.rounded())))",
+                            "speed_quality=\(location.speedQuality)"
+                        ].joined(separator: ";")
+                    )
                 case .failure(let failure):
                     return (.unavailable, failure.reasonCode, failure.detail)
                 }
@@ -299,7 +306,14 @@ public struct SystemLocationSnapshotProvider: LocationSnapshotProviding, Locatio
                 "place_type_quality": .string(place.quality),
                 "place_source": .string(place.source),
                 "poi_lookup_available": .int(place.poiLookupAvailable ? 1 : 0),
+                "speed_quality": .string(location.speedQuality),
             ]
+            if let speedMPS = location.speedMPS {
+                locationValues["speed_mps"] = .double(speedMPS)
+            }
+            if let speedKmh = location.speedKmh {
+                locationValues["speed_kmh"] = .double(speedKmh)
+            }
             if !place.candidates.isEmpty {
                 locationValues["place_candidates"] = .array(place.candidates.map(\.jsonValue))
             }
@@ -845,6 +859,9 @@ struct LocationSample: Equatable, Sendable {
     var longitude: Double
     var horizontalAccuracy: Double
     var timestamp: Date
+    var speedMPS: Double?
+    var speedKmh: Double?
+    var speedQuality: String
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -856,15 +873,35 @@ struct LocationSample: Equatable, Sendable {
             altitude: 0,
             horizontalAccuracy: max(0, horizontalAccuracy),
             verticalAccuracy: -1,
+            course: -1,
+            speed: speedMPS ?? -1,
             timestamp: timestamp
         )
     }
 
-    init(_ location: CLLocation) {
+    init(_ location: CLLocation, now: Date = Date()) {
         self.latitude = location.coordinate.latitude
         self.longitude = location.coordinate.longitude
         self.horizontalAccuracy = location.horizontalAccuracy
         self.timestamp = location.timestamp
+        let speedDecision = Self.validSpeed(from: location, now: now)
+        self.speedMPS = speedDecision.speedMPS
+        self.speedKmh = speedDecision.speedMPS.map { $0 * 3.6 }
+        self.speedQuality = speedDecision.quality
+    }
+
+    private static func validSpeed(from location: CLLocation, now: Date) -> (speedMPS: Double?, quality: String) {
+        guard location.speed >= 0 else {
+            return (nil, "invalid")
+        }
+        let sampleAge = now.timeIntervalSince(location.timestamp)
+        guard sampleAge >= 0, sampleAge <= 30 else {
+            return (nil, "stale")
+        }
+        guard location.horizontalAccuracy >= 0, location.horizontalAccuracy <= 100 else {
+            return (nil, "low_accuracy")
+        }
+        return (location.speed, "valid")
     }
 }
 
@@ -919,7 +956,7 @@ private struct LocationDelegateUpdate: Sendable {
     init(locations: [CLLocation]) {
         self.rawCount = locations.count
         self.validSamples = locations
-            .map(LocationSample.init)
+            .map { LocationSample($0) }
             .filter { $0.horizontalAccuracy >= 0 }
             .sorted { $0.horizontalAccuracy < $1.horizontalAccuracy }
     }

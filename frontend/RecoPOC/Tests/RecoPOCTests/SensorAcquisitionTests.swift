@@ -824,6 +824,37 @@ struct SensorAcquisitionTests {
         #expect(fakeClient.aroundRequests.count == 1)
     }
 
+    @Test("CoreLocation speed is captured when fresh and accurate")
+    func coreLocationSpeedCapturedWhenFreshAndAccurate() async throws {
+        let startedAt = Date()
+        let location = LocationSample(
+            CLLocation(
+                coordinate: CLLocationCoordinate2D(latitude: 31.2304, longitude: 121.4737),
+                altitude: 0,
+                horizontalAccuracy: 35,
+                verticalAccuracy: -1,
+                course: -1,
+                speed: 16.7,
+                timestamp: startedAt
+            ),
+            now: startedAt.addingTimeInterval(1)
+        )
+        let provider = SystemLocationSnapshotProvider(
+            locationReader: StubLocationReader(report: LocationReadReport(outcome: .success(location))),
+            amapConfiguration: .disabled
+        )
+
+        let outcome = await provider.readLocationSnapshotWithTrace()
+        guard case .reading(let reading) = outcome.result else {
+            Issue.record("Expected captured location reading.")
+            return
+        }
+
+        #expect(reading.values["speed_mps"] == JSONValue.double(16.7))
+        #expect(reading.values["speed_kmh"] == JSONValue.double(60.12))
+        #expect(reading.values["speed_quality"] == JSONValue.string("valid"))
+    }
+
     @Test("AMap GPS input is converted before nearby POI lookup")
     func amapLocationProviderConvertsGPSInputBeforeLookup() async throws {
         let startedAt = Date()

@@ -220,6 +220,89 @@ public struct PlaceCandidate: Codable, Equatable, Sendable {
     }
 }
 
+public struct MovementState: Codable, Equatable, Sendable {
+    public var state: String
+    public var transportMode: String?
+    public var speedKmh: Double?
+    public var speedQuality: String
+    public var source: String
+
+    public init(
+        state: String,
+        transportMode: String? = nil,
+        speedKmh: Double? = nil,
+        speedQuality: String,
+        source: String
+    ) {
+        self.state = state
+        self.transportMode = transportMode
+        self.speedKmh = speedKmh
+        self.speedQuality = speedQuality
+        self.source = source
+    }
+
+    public var displayValue: String {
+        var parts = [state]
+        if let transportMode, !transportMode.isEmpty {
+            parts.append(transportMode)
+        }
+        if let speedKmh {
+            parts.append("\(Int(speedKmh.rounded()))km/h")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    public var hasValidSpeed: Bool {
+        speedQuality == "valid" && speedKmh != nil
+    }
+
+    public static func derive(
+        activityState: String,
+        activityStateAvailable: Bool,
+        rawMotionActivity: String?,
+        speedKmh: Double?,
+        speedQuality: String
+    ) -> MovementState {
+        let validSpeedKmh = speedQuality == "valid" ? speedKmh : nil
+        let state = validSpeedKmh.map { speedBand(forKmh: $0) }
+            ?? (activityStateAvailable ? activityState : "任意")
+        let transportMode = transportMode(for: rawMotionActivity)
+        let source = validSpeedKmh == nil ? "activity_state" : "location_speed"
+        return MovementState(
+            state: state,
+            transportMode: transportMode,
+            speedKmh: validSpeedKmh,
+            speedQuality: speedQuality,
+            source: source
+        )
+    }
+
+    private static func speedBand(forKmh speedKmh: Double) -> String {
+        let speedMPS = speedKmh / 3.6
+        if speedMPS < 0.5 { return "静止" }
+        if speedMPS < 2.5 { return "慢速" }
+        if speedMPS < 7.0 { return "中速" }
+        return "高速"
+    }
+
+    private static func transportMode(for rawMotionActivity: String?) -> String? {
+        switch rawMotionActivity {
+        case "automotive":
+            return "驾车"
+        case "walking", "pedometer_steps":
+            return "步行"
+        case "running":
+            return "跑步"
+        case "cycling":
+            return "骑行"
+        case "stationary", "pedometer_no_steps_static_fallback":
+            return "静止"
+        default:
+            return nil
+        }
+    }
+}
+
 public struct RawSensorSnapshot: Codable, Equatable, Sendable {
     public var startedAt: Date
     public var frozenAt: Date
@@ -236,12 +319,17 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
     public var placeTypeAvailable: Bool
     public var placeTypeConfidence: Double
     public var placeTypeQuality: String
+    public var placeSource: String?
     public var placeCandidates: [PlaceCandidate]
     public var latitude: Double?
     public var longitude: Double?
     public var locationAccuracyM: Double?
+    public var speedMPS: Double?
+    public var speedKmh: Double?
+    public var speedQuality: String
     public var activityState: String
     public var activityStateAvailable: Bool
+    public var rawMotionActivity: String?
     public var heartRateZone: String?
     public var heartRateAvailable: Bool
     public var stepsLast10Min: Int?
@@ -267,12 +355,17 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
         placeTypeAvailable: Bool,
         placeTypeConfidence: Double,
         placeTypeQuality: String,
+        placeSource: String? = nil,
         placeCandidates: [PlaceCandidate] = [],
         latitude: Double? = nil,
         longitude: Double? = nil,
         locationAccuracyM: Double? = nil,
+        speedMPS: Double? = nil,
+        speedKmh: Double? = nil,
+        speedQuality: String = "unavailable",
         activityState: String,
         activityStateAvailable: Bool,
+        rawMotionActivity: String? = nil,
         heartRateZone: String? = nil,
         heartRateAvailable: Bool,
         stepsLast10Min: Int? = nil,
@@ -301,12 +394,17 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
         self.placeTypeAvailable = placeTypeAvailable
         self.placeTypeConfidence = placeTypeConfidence
         self.placeTypeQuality = placeTypeQuality
+        self.placeSource = placeSource
         self.placeCandidates = Array(placeCandidates.prefix(3))
         self.latitude = latitude
         self.longitude = longitude
         self.locationAccuracyM = locationAccuracyM
+        self.speedMPS = speedMPS
+        self.speedKmh = speedKmh ?? speedMPS.map { $0 * 3.6 }
+        self.speedQuality = speedQuality
         self.activityState = activityState
         self.activityStateAvailable = activityStateAvailable
+        self.rawMotionActivity = rawMotionActivity
         self.heartRateZone = heartRateZone
         self.heartRateAvailable = heartRateAvailable
         self.stepsLast10Min = stepsLast10Min
@@ -345,12 +443,17 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
         let placeType = Self.stringValue(for: .location, key: "place_type", in: fieldMap) ?? "任意"
         let placeTypeConfidence = Self.doubleValue(for: .location, key: "place_type_confidence", in: fieldMap) ?? 0
         let placeTypeQuality = Self.stringValue(for: .location, key: "place_type_quality", in: fieldMap) ?? Self.defaultQuality(for: fieldMap[.location]?.state)
+        let placeSource = Self.stringValue(for: .location, key: "place_source", in: fieldMap)
         let placeCandidates = Self.placeCandidatesValue(for: .location, key: "place_candidates", in: fieldMap)
         let poiLookupAvailable = Self.intValue(for: .location, key: "poi_lookup_available", in: fieldMap)
         let latitude = Self.doubleValue(for: .location, key: "latitude", in: fieldMap) ?? Self.doubleValue(for: .location, key: "lat", in: fieldMap)
         let longitude = Self.doubleValue(for: .location, key: "longitude", in: fieldMap) ?? Self.doubleValue(for: .location, key: "lon", in: fieldMap)
         let locationAccuracyM = Self.doubleValue(for: .location, key: "location_accuracy_m", in: fieldMap)
+        let speedMPS = Self.doubleValue(for: .location, key: "speed_mps", in: fieldMap)
+        let speedKmh = Self.doubleValue(for: .location, key: "speed_kmh", in: fieldMap) ?? speedMPS.map { $0 * 3.6 }
+        let speedQuality = Self.stringValue(for: .location, key: "speed_quality", in: fieldMap) ?? (speedKmh == nil ? "unavailable" : "valid")
         let activityState = Self.stringValue(for: .activitySensor, key: "activity_state", in: fieldMap) ?? Self.stringValue(for: .motion, key: "activity_state", in: fieldMap) ?? "任意"
+        let rawMotionActivity = Self.stringValue(for: .activitySensor, key: "raw_motion_activity", in: fieldMap) ?? Self.stringValue(for: .motion, key: "raw_motion_activity", in: fieldMap)
         let heartRateZone = Self.stringValue(for: .battery, key: "heart_rate_zone", in: fieldMap) ?? Self.stringValue(for: .health, key: "heart_rate_zone", in: fieldMap)
         let stepsLast10Min = Self.intValue(for: .battery, key: "steps_last_10min", in: fieldMap) ?? Self.intValue(for: .health, key: "steps_last_10min", in: fieldMap)
         let recentWorkoutMinutes24h = Self.intValue(for: .battery, key: "recent_workout_minutes_24h", in: fieldMap) ?? Self.intValue(for: .health, key: "recent_workout_minutes_24h", in: fieldMap)
@@ -381,12 +484,17 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
             placeTypeAvailable: Self.isCaptured(fieldMap[.location]) && placeType != "任意" && (poiLookupAvailable.map { $0 > 0 } ?? true),
             placeTypeConfidence: placeTypeConfidence,
             placeTypeQuality: placeTypeQuality,
+            placeSource: placeSource,
             placeCandidates: placeCandidates,
             latitude: latitude,
             longitude: longitude,
             locationAccuracyM: locationAccuracyM,
+            speedMPS: speedMPS,
+            speedKmh: speedKmh,
+            speedQuality: speedQuality,
             activityState: activityState,
             activityStateAvailable: Self.isCaptured(fieldMap[.activitySensor]) || Self.isCaptured(fieldMap[.motion]),
+            rawMotionActivity: rawMotionActivity,
             heartRateZone: heartRateZone,
             heartRateAvailable: heartRateZone != nil && (Self.isCaptured(fieldMap[.battery]) || Self.isCaptured(fieldMap[.health])),
             stepsLast10Min: stepsLast10Min,
@@ -446,6 +554,16 @@ public struct RawSensorSnapshot: Codable, Equatable, Sendable {
         calendarAvailable: true,
         statuses: ["snapshot": AcquisitionStatus(.available)]
     )
+
+    public func movementState(includeRawMotionActivity: Bool = true) -> MovementState {
+        MovementState.derive(
+            activityState: activityState,
+            activityStateAvailable: activityStateAvailable,
+            rawMotionActivity: includeRawMotionActivity ? rawMotionActivity : nil,
+            speedKmh: speedKmh,
+            speedQuality: speedQuality
+        )
+    }
 
     private static func stringValue(for sensor: RawSensorName, key: String, in fields: [RawSensorName: RawSensorField]) -> String? {
         fields[sensor]?.reading?.values[key]?.stringValue

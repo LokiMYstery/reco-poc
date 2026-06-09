@@ -146,6 +146,8 @@ final class PermissionCapabilityTests: XCTestCase {
         XCTAssertTrue(rows.contains { $0.title == "Network" && $0.value == "wifi" })
         XCTAssertTrue(rows.contains { $0.title == "Audio route" && $0.value == "耳机" })
         XCTAssertTrue(rows.contains { $0.title == "Health" && $0.value.contains("steps/10m 250") })
+        XCTAssertTrue(model.diagnosticsScreen.sensorStatuses.contains { $0.title == "Refined place" && $0.status == "写字楼" })
+        XCTAssertTrue(model.diagnosticsScreen.sensorStatuses.contains { $0.title == "Movement" && $0.status == "静止" })
         XCTAssertFalse(rows.map { "\($0.title) \($0.value) \($0.detail ?? "")" }.joined(separator: " ").contains("req_"))
     }
 

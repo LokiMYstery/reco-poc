@@ -2,6 +2,12 @@ import XCTest
 @testable import RecoPOC
 
 final class MappingAndRunIntegrationTests: XCTestCase {
+    private let fullUser = VirtualUserRegistry.defaultUsers(deviceUUID: "device-demo")
+        .first { $0.key == "u_full_permission" }!
+
+    private let locationOnlyUser = VirtualUserRegistry.defaultUsers(deviceUUID: "device-demo")
+        .first { $0.key == "u_location_only_no_health" }!
+
     func testVirtualContextDerivationAppliesLocationNoneAndPayloadSerializesLane1UserID() {
         let user = VirtualUserRegistry.defaultUsers(deviceUUID: "device-demo")
             .first { $0.key == "u_no_location" }!
@@ -101,6 +107,133 @@ final class MappingAndRunIntegrationTests: XCTestCase {
                 "quality": .string("noisy_mapping")
             ])
         ]))
+    }
+
+    func testHighSpeedAutomotiveMovementRefinesTransitButKeepsBackendActivityCompat() {
+        let snapshot = movingSnapshot(
+            placeType: "餐厅",
+            placeSource: "amap_around_typecode_name",
+            activityState: "中速",
+            rawMotionActivity: "automotive",
+            speedKmh: 60.12
+        )
+
+        let movement = snapshot.movementState()
+        let context = VirtualContextDeriver().derive(
+            snapshot: snapshot,
+            virtualUser: fullUser,
+            questionnaire: .sample
+        )
+        let request = BackendPayloadMapper().recommendPayload(
+            context: context,
+            requestID: "run-001:u_full_permission",
+            topK: 3
+        )
+
+        XCTAssertEqual(movement.state, "高速")
+        XCTAssertEqual(movement.displayValue, "高速 · 驾车 · 60km/h")
+        XCTAssertEqual(context.fields["place_type"], .string("在途"))
+        XCTAssertEqual(context.fields["activity_state"], .string("中速"))
+        XCTAssertEqual(request.context["activity_state"], .string("中速"))
+        guard case .array(let candidates)? = context.fields["place_candidates"] else {
+            XCTFail("Expected refined place candidates.")
+            return
+        }
+        XCTAssertEqual(candidates.first, .object([
+            "place_type": .string("在途"),
+            "confidence": .double(0.76),
+            "source": .string("frontend_transit_refiner"),
+            "quality": .string("transit_refined")
+        ]))
+        XCTAssertTrue(candidates.contains(.object([
+            "place_type": .string("餐厅"),
+            "confidence": .double(0.25),
+            "distance_m": .double(30),
+            "source": .string("amap_around_typecode_name"),
+            "quality": .string("noisy_mapping")
+        ])))
+    }
+
+    func testTransitRefinerDoesNotOverrideProtectedStationEvidence() {
+        let snapshot = movingSnapshot(
+            placeType: "地铁站",
+            placeSource: "amap_around_typecode_name",
+            activityState: "中速",
+            rawMotionActivity: "automotive",
+            speedKmh: 60
+        )
+
+        let context = VirtualContextDeriver().derive(
+            snapshot: snapshot,
+            virtualUser: fullUser,
+            questionnaire: .sample
+        )
+
+        XCTAssertEqual(context.fields["place_type"], .string("地铁站"))
+        XCTAssertEqual(context.fields["place_type_quality"], .string("exact_or_good_mapping"))
+    }
+
+    func testTransitRefinerDoesNotUseRawMotionWhenMotionIsMasked() {
+        let snapshot = movingSnapshot(
+            placeType: "商场",
+            placeSource: "amap_around_typecode_name",
+            activityState: "中速",
+            rawMotionActivity: "automotive",
+            speedKmh: nil,
+            speedQuality: "unavailable"
+        )
+
+        let context = VirtualContextDeriver().derive(
+            snapshot: snapshot,
+            virtualUser: locationOnlyUser,
+            questionnaire: .sample
+        )
+
+        XCTAssertEqual(context.fields["place_type"], .string("商场"))
+        XCTAssertEqual(context.fields["activity_state"], .string("任意"))
+        XCTAssertEqual(context.fields["activity_state_available"], .int(0))
+    }
+
+    func testTransitRefinerCanUseSpeedWhenMotionIsMasked() {
+        let snapshot = movingSnapshot(
+            placeType: "商场",
+            placeSource: "amap_around_typecode_name",
+            activityState: "中速",
+            rawMotionActivity: "automotive",
+            speedKmh: 60
+        )
+
+        let context = VirtualContextDeriver().derive(
+            snapshot: snapshot,
+            virtualUser: locationOnlyUser,
+            questionnaire: .sample
+        )
+
+        XCTAssertEqual(context.fields["place_type"], .string("在途"))
+        XCTAssertEqual(context.fields["activity_state"], .string("任意"))
+    }
+
+    func testInvalidSpeedFallsBackToExistingActivityAndPlace() {
+        let snapshot = movingSnapshot(
+            placeType: "餐厅",
+            placeSource: "amap_around_typecode_name",
+            activityState: "慢速",
+            rawMotionActivity: "walking",
+            speedKmh: nil,
+            speedQuality: "low_accuracy"
+        )
+
+        let movement = snapshot.movementState()
+        let context = VirtualContextDeriver().derive(
+            snapshot: snapshot,
+            virtualUser: fullUser,
+            questionnaire: .sample
+        )
+
+        XCTAssertEqual(movement.state, "慢速")
+        XCTAssertEqual(movement.displayValue, "慢速 · 步行")
+        XCTAssertEqual(context.fields["place_type"], .string("餐厅"))
+        XCTAssertEqual(context.fields["activity_state"], .string("慢速"))
     }
 
     func testPrivacyWeakSignalsUseKeywordWeatherAndOmitLightClass() {
@@ -231,5 +364,47 @@ final class MappingAndRunIntegrationTests: XCTestCase {
         let recreated = FeedbackRetryQueue()
         let recreatedCount = recreated.count
         XCTAssertEqual(recreatedCount, 0)
+    }
+
+    private func movingSnapshot(
+        placeType: String,
+        placeSource: String,
+        activityState: String,
+        rawMotionActivity: String?,
+        speedKmh: Double?,
+        speedQuality: String = "valid"
+    ) -> RawSensorSnapshot {
+        RawSensorSnapshot(
+            capturedAt: Date(timeIntervalSince1970: 1_000),
+            timezone: "Asia/Shanghai",
+            hour: 10,
+            weekday: 2,
+            network: "wifi",
+            bluetooth: "耳机",
+            placeType: placeType,
+            placeTypeAvailable: true,
+            placeTypeConfidence: 0.76,
+            placeTypeQuality: "exact_or_good_mapping",
+            placeSource: placeSource,
+            placeCandidates: [
+                PlaceCandidate(
+                    placeType: placeType,
+                    confidence: 0.76,
+                    distanceM: 30,
+                    source: placeSource,
+                    quality: "exact_or_good_mapping"
+                )
+            ],
+            latitude: 31.2304,
+            longitude: 121.4737,
+            locationAccuracyM: 35,
+            speedMPS: speedKmh.map { $0 / 3.6 },
+            speedKmh: speedKmh,
+            speedQuality: speedQuality,
+            activityState: activityState,
+            activityStateAvailable: true,
+            rawMotionActivity: rawMotionActivity,
+            heartRateAvailable: false
+        )
     }
 }

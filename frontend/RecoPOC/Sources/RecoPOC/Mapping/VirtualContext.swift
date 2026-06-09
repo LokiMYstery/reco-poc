@@ -29,7 +29,7 @@ public struct VirtualContextDeriver: VirtualContextDeriving {
             "app_event_available": .int(1)
         ]
 
-        applyLocation(snapshot, mask: virtualUser.mask.location, into: &fields)
+        applyLocation(snapshot, locationMask: virtualUser.mask.location, motionMask: virtualUser.mask.motion, into: &fields)
         applyMotion(snapshot, mask: virtualUser.mask.motion, into: &fields)
         applyHealth(snapshot, mask: virtualUser.mask.health, into: &fields)
         applyMicrophone(snapshot, mask: virtualUser.mask.microphone, into: &fields)
@@ -44,15 +44,31 @@ public struct VirtualContextDeriver: VirtualContextDeriving {
         mask == .weakCellular ? "蜂窝数据（弱）" : network
     }
 
-    private func applyLocation(_ snapshot: RawSensorSnapshot, mask: LocationMask, into fields: inout [String: JSONValue]) {
-        switch mask {
+    private func applyLocation(
+        _ snapshot: RawSensorSnapshot,
+        locationMask: LocationMask,
+        motionMask: MotionMask,
+        into fields: inout [String: JSONValue]
+    ) {
+        switch locationMask {
         case .full:
-            fields["place_type"] = .string(snapshot.placeType)
-            fields["place_type_available"] = .int(snapshot.placeTypeAvailable ? 1 : 0)
-            fields["place_type_confidence"] = .double(snapshot.placeTypeConfidence)
-            fields["place_type_quality"] = .string(snapshot.placeTypeQuality)
-            if !snapshot.placeCandidates.isEmpty {
-                fields["place_candidates"] = .array(snapshot.placeCandidates.map(\.jsonValue))
+            let includeRawMotion = motionMask == .full
+            let refinedPlace = PlaceTransitRefiner.refine(
+                placeType: snapshot.placeType,
+                placeTypeAvailable: snapshot.placeTypeAvailable,
+                placeTypeConfidence: snapshot.placeTypeConfidence,
+                placeTypeQuality: snapshot.placeTypeQuality,
+                placeSource: snapshot.placeSource,
+                placeCandidates: snapshot.placeCandidates,
+                movementState: snapshot.movementState(includeRawMotionActivity: includeRawMotion),
+                rawMotionActivity: includeRawMotion ? snapshot.rawMotionActivity : nil
+            )
+            fields["place_type"] = .string(refinedPlace.placeType)
+            fields["place_type_available"] = .int(refinedPlace.placeTypeAvailable ? 1 : 0)
+            fields["place_type_confidence"] = .double(refinedPlace.placeTypeConfidence)
+            fields["place_type_quality"] = .string(refinedPlace.placeTypeQuality)
+            if !refinedPlace.placeCandidates.isEmpty {
+                fields["place_candidates"] = .array(refinedPlace.placeCandidates.map(\.jsonValue))
             }
             if let latitude = snapshot.latitude { fields["latitude"] = .double(latitude) }
             if let longitude = snapshot.longitude { fields["longitude"] = .double(longitude) }
@@ -166,5 +182,114 @@ public struct VirtualContextDeriver: VirtualContextDeriving {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withColonSeparatorInTimeZone]
         return formatter.string(from: date)
+    }
+}
+
+struct RefinedPlace: Equatable, Sendable {
+    var placeType: String
+    var placeTypeAvailable: Bool
+    var placeTypeConfidence: Double
+    var placeTypeQuality: String
+    var placeCandidates: [PlaceCandidate]
+}
+
+enum PlaceTransitRefiner {
+    private static let staticPOITypes: Set<String> = [
+        "住宅区",
+        "商场",
+        "酒店",
+        "餐厅",
+        "公园",
+        "写字楼",
+        "图书馆",
+        "运动场所"
+    ]
+    private static let transitEvidenceTypes: Set<String> = [
+        "机场",
+        "高铁站",
+        "地铁站",
+        "在途"
+    ]
+    private static let strongRegeoSources: Set<String> = [
+        "amap_regeo_building",
+        "amap_regeo_neighborhood"
+    ]
+
+    static func refine(
+        placeType: String,
+        placeTypeAvailable: Bool,
+        placeTypeConfidence: Double,
+        placeTypeQuality: String,
+        placeSource: String?,
+        placeCandidates: [PlaceCandidate],
+        movementState: MovementState,
+        rawMotionActivity: String?
+    ) -> RefinedPlace {
+        let original = RefinedPlace(
+            placeType: placeType,
+            placeTypeAvailable: placeTypeAvailable,
+            placeTypeConfidence: placeTypeConfidence,
+            placeTypeQuality: placeTypeQuality,
+            placeCandidates: placeCandidates
+        )
+        guard isStrongTransit(rawMotionActivity: rawMotionActivity, movementState: movementState) else {
+            return original
+        }
+        guard !hasProtectedEvidence(placeType: placeType, placeSource: placeSource, candidates: placeCandidates) else {
+            return original
+        }
+        guard !placeTypeAvailable || isAroundOnlyStaticPOI(placeType: placeType, placeSource: placeSource, candidates: placeCandidates) else {
+            return original
+        }
+
+        let transitConfidence = min(0.85, max(0.65, placeTypeConfidence))
+        let degradedCandidates = placeCandidates
+            .filter { staticPOITypes.contains($0.placeType) }
+            .map { candidate in
+                PlaceCandidate(
+                    placeType: candidate.placeType,
+                    confidence: min(candidate.confidence, 0.25),
+                    distanceM: candidate.distanceM,
+                    source: candidate.source,
+                    quality: "noisy_mapping"
+                )
+            }
+        let candidates = Array((
+            [PlaceCandidate(
+                placeType: "在途",
+                confidence: transitConfidence,
+                source: "frontend_transit_refiner",
+                quality: "transit_refined"
+            )] + degradedCandidates
+        ).prefix(3))
+        return RefinedPlace(
+            placeType: "在途",
+            placeTypeAvailable: true,
+            placeTypeConfidence: transitConfidence,
+            placeTypeQuality: "transit_refined",
+            placeCandidates: candidates
+        )
+    }
+
+    private static func isStrongTransit(rawMotionActivity: String?, movementState: MovementState) -> Bool {
+        rawMotionActivity == "automotive" || ((movementState.speedKmh ?? 0) >= 25 && movementState.speedQuality == "valid")
+    }
+
+    private static func hasProtectedEvidence(placeType: String, placeSource: String?, candidates: [PlaceCandidate]) -> Bool {
+        if transitEvidenceTypes.contains(placeType) { return true }
+        if let placeSource, strongRegeoSources.contains(placeSource) { return true }
+        return candidates.contains { candidate in
+            transitEvidenceTypes.contains(candidate.placeType) || strongRegeoSources.contains(candidate.source)
+        }
+    }
+
+    private static func isAroundOnlyStaticPOI(placeType: String, placeSource: String?, candidates: [PlaceCandidate]) -> Bool {
+        guard staticPOITypes.contains(placeType) else {
+            return candidates.isEmpty && placeType == "任意"
+        }
+        let sources = ([placeSource].compactMap { $0 } + candidates.map(\.source))
+            .filter { !$0.isEmpty }
+        guard !sources.isEmpty else { return true }
+        return sources.allSatisfy { $0.hasPrefix("amap_around") }
     }
 }
