@@ -1085,18 +1085,26 @@ struct SensorAcquisitionTests {
         }
 
         #expect(reading.values["place_type"] == JSONValue.string("住宅区"))
-        #expect(reading.values["place_type_quality"] == JSONValue.string("noisy_mapping"))
+        #expect(reading.values["place_type_quality"] == JSONValue.string("exact_or_good_mapping"))
         guard case .array(let candidates)? = reading.values["place_candidates"] else {
             Issue.record("Expected place_candidates array.")
             return
         }
-        let candidatePlaceTypes = candidates.compactMap { candidate -> String? in
-            if case .object(let object) = candidate { return object["place_type"]?.stringValue }
+        let candidateObjects = candidates.compactMap { candidate -> [String: JSONValue]? in
+            if case .object(let object) = candidate { return object }
             return nil
         }
+        let candidatePlaceTypes = candidateObjects.compactMap { $0["place_type"]?.stringValue }
+        let residentialConfidence = candidateObjects
+            .first { $0["place_type"]?.stringValue == "住宅区" }
+            .flatMap { confidenceValue($0["confidence"]) } ?? 0
+        let restaurantConfidence = candidateObjects
+            .first { $0["place_type"]?.stringValue == "餐厅" }
+            .flatMap { confidenceValue($0["confidence"]) } ?? 0
         #expect(candidates.count == 2)
         #expect(candidatePlaceTypes.first == "住宅区")
         #expect(candidatePlaceTypes.contains("餐厅"))
+        #expect(residentialConfidence - restaurantConfidence >= 0.12)
 
         let traceText = outcome.steps.compactMap { $0.detail }.joined(separator: "\n")
         #expect(traceText.contains("neighborhood_present=1"))
@@ -1104,6 +1112,17 @@ struct SensorAcquisitionTests {
         for forbidden in ["secret-amap-key", "秘密花园小区", "秘密餐厅 A", "秘密餐厅 B"] {
             #expect(!traceText.contains(forbidden))
             #expect(!String(describing: reading.values).contains(forbidden))
+        }
+    }
+
+    private func confidenceValue(_ value: JSONValue?) -> Double? {
+        switch value {
+        case .double(let number):
+            return number
+        case .int(let number):
+            return Double(number)
+        default:
+            return nil
         }
     }
 

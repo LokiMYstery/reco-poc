@@ -342,11 +342,11 @@
       "aroundRegeoAgreement": 0.86
     },
     "fusion": {
-      "secondWeight": 0.08,
-      "thirdWeight": 0.04,
+      "secondWeight": 0.04,
+      "thirdWeight": 0.02,
       "structuralBonus": 0.04,
       "structuralAroundBonus": 0.04,
-      "missingStructuralPenalty": 0.04,
+      "missingStructuralPenalty": 0.14,
       "maxConfidence": 0.9
     },
     "quality": {
