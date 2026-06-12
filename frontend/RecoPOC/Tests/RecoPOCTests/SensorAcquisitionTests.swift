@@ -249,6 +249,9 @@ struct SensorAcquisitionTests {
             "测试中心",
             "测试公司",
             "测试大学",
+            "测试新城",
+            "测试公馆",
+            "测试华庭",
         ]
 
         for name in weakOnlyNames {
@@ -260,6 +263,7 @@ struct SensorAcquisitionTests {
 
         #expect(NativePlaceTypeMapper.testCandidate(name: "测试购物广场", distance: 40).placeType == "商场")
         #expect(NativePlaceTypeMapper.testCandidate(name: "测试湿地公园", distance: 40).placeType == "公园")
+        #expect(NativePlaceTypeMapper.testCandidate(name: "测试海岸公园", distance: 40).placeType == "公园")
         #expect(NativePlaceTypeMapper.testCandidate(name: "测试阅览室", distance: 40).placeType == "图书馆")
         #expect(NativePlaceTypeMapper.testCandidate(name: "测试滨海码头", distance: 40).placeType == "海边")
     }
@@ -355,12 +359,14 @@ struct SensorAcquisitionTests {
         let place = NativePlaceTypeMapper.testDecision(candidates: [
             NativePlaceTypeMapper.testCandidate(typecode: "050100", type: "餐饮服务", name: "餐厅 A", distance: 40, rank: 0),
             NativePlaceTypeMapper.testCandidate(typecode: "050100", type: "餐饮服务", name: "餐厅 B", distance: 50, rank: 1),
-            NativePlaceTypeMapper.testCandidate(typecode: "080100", type: "体育休闲服务;运动场馆", name: "体育馆", distance: 70, rank: 2),
+            NativePlaceTypeMapper.testCandidate(name: "办公楼", distance: 70, rank: 2),
             NativePlaceTypeMapper.testCandidate(typecode: "100000", type: "住宿服务", name: "酒店 A", distance: 180, rank: 3),
         ])
 
         #expect(place.placeType == "餐厅")
-        #expect(place.confidence >= 0.80)
+        #expect(place.confidence >= 0.60)
+        #expect(place.confidence < 0.70)
+        #expect(place.quality == "noisy_mapping")
         #expect(place.poiLookupAvailable == true)
         #expect(place.candidates.count == 3)
         #expect(place.candidates[0].placeType == "餐厅")
@@ -372,7 +378,7 @@ struct SensorAcquisitionTests {
     @Test("AMap decision downgrades close runner-up conflicts")
     func amapDecisionDowngradesCloseRunnerUp() async throws {
         let place = NativePlaceTypeMapper.testDecision(candidates: [
-            NativePlaceTypeMapper.testCandidate(typecode: "050100", type: "餐饮服务", name: "餐厅 A", distance: 40),
+            NativePlaceTypeMapper.testCandidate(typecode: "060100", type: "购物服务", name: "商场 A", distance: 40),
             NativePlaceTypeMapper.testCandidate(typecode: "100000", type: "住宿服务", name: "酒店 A", distance: 40),
         ])
 
@@ -402,6 +408,9 @@ struct SensorAcquisitionTests {
         #expect(knowledge.query.aroundTypePrefixes.contains("180000"))
         #expect(knowledge.query.aroundTypePrefixes.contains("190000"))
         #expect(knowledge.keywords.strongRules.contains { $0.placeType == "户外" })
+        #expect(knowledge.keywords.weakRules.contains { $0.placeType == "住宅区" && $0.keywords.contains("新城") })
+        #expect(knowledge.keywords.terminalRules.contains { $0.placeType == "住宅区" && $0.keywords.contains("花园") })
+        #expect(knowledge.scoring.poiCaps.placeTypeCaps.contains { $0.placeType == "餐厅" && $0.aroundMax == 0.62 })
     }
 
     @Test("AMap knowledge rejects invalid place type")
@@ -1030,8 +1039,8 @@ struct SensorAcquisitionTests {
         }
         #expect(candidates.count == 3)
         #expect(candidatePlaceTypes.first == "住宅区")
-        #expect(candidatePlaceTypes.contains("餐厅"))
         #expect(candidatePlaceTypes.contains("运动场所"))
+        #expect(candidatePlaceTypes.contains("写字楼"))
 
         let traceText = outcome.steps.compactMap { $0.detail }.joined(separator: "\n")
         let payloadText = String(describing: reading.values)
@@ -1105,6 +1114,7 @@ struct SensorAcquisitionTests {
         #expect(candidatePlaceTypes.first == "住宅区")
         #expect(candidatePlaceTypes.contains("餐厅"))
         #expect(residentialConfidence - restaurantConfidence >= 0.12)
+        #expect(restaurantConfidence < 0.55)
 
         let traceText = outcome.steps.compactMap { $0.detail }.joined(separator: "\n")
         #expect(traceText.contains("neighborhood_present=1"))
@@ -1112,6 +1122,127 @@ struct SensorAcquisitionTests {
         for forbidden in ["secret-amap-key", "秘密花园小区", "秘密餐厅 A", "秘密餐厅 B"] {
             #expect(!traceText.contains(forbidden))
             #expect(!String(describing: reading.values).contains(forbidden))
+        }
+    }
+
+    @Test("AMap regeo residential suffix beats coastal modifier and nearby restaurants")
+    func amapRegeoResidentialSuffixBeatsCoastalModifier() async throws {
+        let startedAt = Date()
+        let location = LocationSample(
+            CLLocation(
+                coordinate: CLLocationCoordinate2D(latitude: 31.2304, longitude: 121.4737),
+                altitude: 0,
+                horizontalAccuracy: 35,
+                verticalAccuracy: -1,
+                timestamp: startedAt
+            )
+        )
+        let fakeClient = FakeAmapPOIClient(
+            regeo: .success(
+                AmapRegeo(
+                    addressComponent: AmapAddressComponent(
+                        neighborhood: AmapNamedArea(name: "美林海岸花园", type: "商务住宅;住宅区")
+                    ),
+                    aois: [
+                        AmapRegeoAOI(id: "secret-aoi-1", name: "美林海岸花园", type: "商务住宅;住宅区", distance: "0"),
+                        AmapRegeoAOI(id: "secret-aoi-2", name: "美林海岸花园一期", type: "商务住宅;住宅区", distance: "0"),
+                    ]
+                )
+            ),
+            pois: .success([
+                AmapRawPOI(name: "秘密餐厅 A", type: "餐饮服务", typecode: "050200", distance: "48"),
+                AmapRawPOI(name: "秘密餐厅 B", type: "餐饮服务", typecode: "050500", distance: "54"),
+                AmapRawPOI(name: "秘密购物中心", type: "购物服务", typecode: "060100", distance: "80"),
+            ])
+        )
+        let provider = SystemLocationSnapshotProvider(
+            locationReader: StubLocationReader(report: LocationReadReport(outcome: .success(location))),
+            amapConfiguration: AmapPOIConfiguration(
+                apiKey: "secret-amap-key",
+                enabled: true,
+                inputCoordinateSystem: .autonavi
+            ),
+            amapClient: fakeClient
+        )
+
+        let outcome = await provider.readLocationSnapshotWithTrace()
+        guard case .reading(let reading) = outcome.result else {
+            Issue.record("Expected captured location reading.")
+            return
+        }
+
+        #expect(reading.values["place_type"] == JSONValue.string("住宅区"))
+        #expect(reading.values["place_type_quality"] == JSONValue.string("exact_or_good_mapping"))
+        guard case .array(let candidates)? = reading.values["place_candidates"] else {
+            Issue.record("Expected place_candidates array.")
+            return
+        }
+        let candidateObjects = candidates.compactMap { candidate -> [String: JSONValue]? in
+            if case .object(let object) = candidate { return object }
+            return nil
+        }
+        let candidatePlaceTypes = candidateObjects.compactMap { $0["place_type"]?.stringValue }
+        let restaurantConfidence = candidateObjects
+            .first { $0["place_type"]?.stringValue == "餐厅" }
+            .flatMap { confidenceValue($0["confidence"]) } ?? 0
+
+        #expect(candidatePlaceTypes.first == "住宅区")
+        #expect(candidatePlaceTypes.contains("餐厅"))
+        #expect(candidatePlaceTypes.contains("商场"))
+        #expect(restaurantConfidence < 0.55)
+
+        let traceText = outcome.steps.compactMap { $0.detail }.joined(separator: "\n")
+        let payloadText = String(describing: reading.values)
+        #expect(traceText.contains("neighborhood_present=1"))
+        #expect(traceText.contains("structural_usable_count=3"))
+        #expect(traceText.contains("fusion_winner=住宅区"))
+        for forbidden in ["secret-amap-key", "美林海岸花园", "秘密餐厅 A", "秘密餐厅 B", "秘密购物中心", "secret-aoi-1", "secret-aoi-2"] {
+            #expect(!traceText.contains(forbidden))
+            #expect(!payloadText.contains(forbidden))
+        }
+    }
+
+    @Test("AMap regeo residential terminal words supplement provider type")
+    func amapRegeoResidentialTerminalWordsSupplementProviderType() async throws {
+        for name in ["秘密新城", "秘密公馆", "秘密家园"] {
+            let startedAt = Date()
+            let location = LocationSample(
+                CLLocation(
+                    coordinate: CLLocationCoordinate2D(latitude: 31.2304, longitude: 121.4737),
+                    altitude: 0,
+                    horizontalAccuracy: 35,
+                    verticalAccuracy: -1,
+                    timestamp: startedAt
+                )
+            )
+            let fakeClient = FakeAmapPOIClient(
+                regeo: .success(
+                    AmapRegeo(
+                        addressComponent: AmapAddressComponent(
+                            neighborhood: AmapNamedArea(name: name, type: "商务住宅;住宅区")
+                        )
+                    )
+                ),
+                pois: .success([])
+            )
+            let provider = SystemLocationSnapshotProvider(
+                locationReader: StubLocationReader(report: LocationReadReport(outcome: .success(location))),
+                amapConfiguration: AmapPOIConfiguration(
+                    apiKey: "secret-amap-key",
+                    enabled: true,
+                    inputCoordinateSystem: .autonavi
+                ),
+                amapClient: fakeClient
+            )
+
+            let outcome = await provider.readLocationSnapshotWithTrace()
+            guard case .reading(let reading) = outcome.result else {
+                Issue.record("Expected captured location reading.")
+                return
+            }
+            #expect(reading.values["place_type"] == JSONValue.string("住宅区"))
+            #expect(reading.values["place_source"] == JSONValue.string("amap_regeo_neighborhood"))
+            #expect(!outcome.steps.compactMap { $0.detail }.joined(separator: "\n").contains(name))
         }
     }
 

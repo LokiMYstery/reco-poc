@@ -1918,9 +1918,15 @@ enum NativePlaceTypeMapper {
         let typeEvidence = keywordEvidence(forText: type ?? "")
         let combinedEvidence = keywordEvidence(forText: text)
         let providerTypePlaceType = providerTypePlaceType(forTypeText: type)
-        let textPlaceType = nameEvidence.strongMatch?.placeType ?? providerTypePlaceType ?? typeEvidence.strongMatch?.placeType
-        let containerOnly = textPlaceType == nil && hasContainerEvidence(name: name, type: type)
-        guard let placeType = textPlaceType ?? (containerOnly ? "写字楼" : nil) else { return nil }
+        let terminalMatch = terminalKeywordMatch(forText: name ?? "")
+        let structuralChoice = weightedStructuralPlaceType(
+            nameEvidence: nameEvidence,
+            typeEvidence: typeEvidence,
+            providerTypePlaceType: providerTypePlaceType,
+            terminalMatch: terminalMatch
+        )
+        let containerOnly = structuralChoice == nil && hasContainerEvidence(name: name, type: type)
+        guard let placeType = structuralChoice?.placeType ?? (containerOnly ? "写字楼" : nil) else { return nil }
 
         var confidence = structuralBaseConfidence(
             placeType: placeType,
@@ -1930,6 +1936,9 @@ enum NativePlaceTypeMapper {
             text: text,
             containerOnly: containerOnly
         )
+        if structuralChoice?.ambiguous == true {
+            confidence -= knowledge.scoring.structuralClassification.ambiguousPenalty
+        }
         confidence -= accuracyPenalty(for: locationAccuracyM) * knowledge.scoring.structural.accuracyPenaltyMultiplier
         if sampleAgeS > 120 { confidence -= knowledge.scoring.structural.staleSamplePenalty }
         confidence = min(max(confidence, 0), knowledge.scoring.structural.maxConfidence)
@@ -1941,7 +1950,9 @@ enum NativePlaceTypeMapper {
             nameConflicts: false,
             typeTextConflicts: false,
             agreesWithRegeo: false
-        ) + (campusContainer ? ["campus_container"] : [])
+        ) + (structuralChoice?.terminalMatch.map { [$0.tag, "terminal_keyword"] } ?? [])
+            + (structuralChoice?.ambiguous == true ? ["structural_ambiguous"] : [])
+            + (campusContainer ? ["campus_container"] : [])
         return NativePlaceCandidate(
             placeType: placeType,
             confidence: confidence,
@@ -1955,11 +1966,80 @@ enum NativePlaceTypeMapper {
                 "rank=\(rank)",
                 "provider_kind=\(providerKind.rawValue)",
                 "campus_container=\(campusContainer ? 1 : 0)",
-                "container_only=\(containerOnly ? 1 : 0)"
+                "container_only=\(containerOnly ? 1 : 0)",
+                "structural_ambiguous=\(structuralChoice?.ambiguous == true ? 1 : 0)"
             ].joined(separator: ","),
             dedupeKey: "\(providerKind.rawValue):\(placeType):\(rank):\(Int(distance.rounded()))",
             providerKind: providerKind,
             tags: Array(Set(tags)).sorted()
+        )
+    }
+
+    private static func weightedStructuralPlaceType(
+        nameEvidence: TextKeywordEvidence,
+        typeEvidence: TextKeywordEvidence,
+        providerTypePlaceType: String?,
+        terminalMatch: KeywordMatch?
+    ) -> StructuralPlaceTypeChoice? {
+        let weights = knowledge().scoring.structuralClassification
+        var scores: [String: StructuralPlaceTypeScore] = [:]
+        var order = 0
+
+        func add(
+            placeType: String?,
+            value: Double,
+            hasProviderType: Bool = false,
+            hasTerminalEvidence: Bool = false,
+            hasStrongEvidence: Bool = false,
+            hasWeakEvidence: Bool = false
+        ) {
+            guard let placeType, value > 0 else { return }
+            var score = scores[placeType] ?? StructuralPlaceTypeScore(
+                placeType: placeType,
+                score: 0,
+                firstOrder: order,
+                hasProviderType: false,
+                hasTerminalEvidence: false,
+                hasStrongEvidence: false,
+                hasWeakEvidence: false
+            )
+            score.score += value
+            score.firstOrder = min(score.firstOrder, order)
+            score.hasProviderType = score.hasProviderType || hasProviderType
+            score.hasTerminalEvidence = score.hasTerminalEvidence || hasTerminalEvidence
+            score.hasStrongEvidence = score.hasStrongEvidence || hasStrongEvidence
+            score.hasWeakEvidence = score.hasWeakEvidence || hasWeakEvidence
+            scores[placeType] = score
+            order += 1
+        }
+
+        add(placeType: providerTypePlaceType, value: weights.providerType, hasProviderType: true)
+        add(placeType: nameEvidence.strongMatch?.placeType, value: weights.nameStrong, hasStrongEvidence: true)
+        add(placeType: typeEvidence.strongMatch?.placeType, value: weights.typeStrong, hasStrongEvidence: true)
+        add(placeType: nameEvidence.weakMatch?.placeType, value: weights.nameWeak, hasWeakEvidence: true)
+        add(placeType: typeEvidence.weakMatch?.placeType, value: weights.typeWeak, hasWeakEvidence: true)
+        add(
+            placeType: terminalMatch?.placeType,
+            value: weights.terminalKeywordBonus,
+            hasTerminalEvidence: true
+        )
+
+        let ranked = scores.values
+            .filter { $0.hasProviderType || $0.hasStrongEvidence || ($0.hasTerminalEvidence && $0.hasWeakEvidence) }
+            .sorted { lhs, rhs in
+                if lhs.score != rhs.score { return lhs.score > rhs.score }
+                if lhs.hasProviderType != rhs.hasProviderType { return lhs.hasProviderType }
+                if lhs.hasTerminalEvidence != rhs.hasTerminalEvidence { return lhs.hasTerminalEvidence }
+                return lhs.firstOrder < rhs.firstOrder
+            }
+        guard let top = ranked.first else { return nil }
+        let ambiguous = ranked.dropFirst().first.map {
+            top.score - $0.score < weights.ambiguousMargin
+        } ?? false
+        return StructuralPlaceTypeChoice(
+            placeType: top.placeType,
+            ambiguous: ambiguous,
+            terminalMatch: terminalMatch?.placeType == top.placeType ? terminalMatch : nil
         )
     }
 
@@ -2171,10 +2251,6 @@ enum NativePlaceTypeMapper {
                 ? knowledge.scoring.poiBoosts.aroundRegeoAgreement
                 : knowledge.scoring.poiBoosts.regeoPOIAgreement
         }
-        confidence -= accuracyPenalty(for: locationAccuracyM)
-        if nameConflicts { confidence -= knowledge.scoring.poiPenalties.nameConflict }
-        if typeTextConflicts { confidence -= knowledge.scoring.poiPenalties.typeTextConflict }
-        if sampleAgeS > 120 { confidence -= knowledge.scoring.poiPenalties.staleSample }
 
         var cap = candidateCap(
             strength: typecodeStrength,
@@ -2188,9 +2264,17 @@ enum NativePlaceTypeMapper {
         if providerKind == .aroundPOI, agreesWithRegeo {
             cap = knowledge.scoring.poiCaps.aroundRegeoAgreement
         }
+        if let placeTypeCap = poiPlaceTypeCap(for: placeType, providerKind: providerKind) {
+            cap = min(cap, placeTypeCap)
+        }
         if providerKind == .aroundPOI || providerKind == .regeoPOI {
             cap = min(cap, poiDistanceCap(for: distance))
         }
+        confidence = min(max(confidence, 0), cap)
+        confidence -= accuracyPenalty(for: locationAccuracyM)
+        if nameConflicts { confidence -= knowledge.scoring.poiPenalties.nameConflict }
+        if typeTextConflicts { confidence -= knowledge.scoring.poiPenalties.typeTextConflict }
+        if sampleAgeS > 120 { confidence -= knowledge.scoring.poiPenalties.staleSample }
         confidence = min(max(confidence, 0), cap)
 
         let source = sourceLabel(
@@ -2324,6 +2408,16 @@ enum NativePlaceTypeMapper {
         )
     }
 
+    private static func terminalKeywordMatch(forText text: String) -> KeywordMatch? {
+        let haystack = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !haystack.isEmpty else { return nil }
+        return knowledge().keywords.terminalRules.first { rule in
+            rule.keywords.contains { endsWithTerm(haystack, needle: $0.lowercased()) }
+        }.map {
+            KeywordMatch(placeType: $0.placeType, tag: $0.tag)
+        }
+    }
+
     private static func containsAny(_ text: String, _ needles: [String]) -> Bool {
         let haystack = text.lowercased()
         return needles.contains { containsTerm(haystack, needle: $0.lowercased()) }
@@ -2344,6 +2438,26 @@ enum NativePlaceTypeMapper {
                 ? haystack[range.upperBound]
                 : nil
             if isASCIIBoundary(before), isASCIIBoundary(after) {
+                return true
+            }
+            searchRange = range.upperBound..<haystack.endIndex
+        }
+        return false
+    }
+
+    private static func endsWithTerm(_ haystack: String, needle: String) -> Bool {
+        let needle = needle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return false }
+        if !isASCIIWordLike(needle) {
+            return haystack.hasSuffix(needle)
+        }
+
+        var searchRange: Range<String.Index>? = haystack.startIndex..<haystack.endIndex
+        while let range = haystack.range(of: needle, options: [], range: searchRange) {
+            let before = range.lowerBound > haystack.startIndex
+                ? haystack[haystack.index(before: range.lowerBound)]
+                : nil
+            if range.upperBound == haystack.endIndex, isASCIIBoundary(before) {
                 return true
             }
             searchRange = range.upperBound..<haystack.endIndex
@@ -2497,6 +2611,21 @@ enum NativePlaceTypeMapper {
             return band.value
         }
         return 0
+    }
+
+    private static func poiPlaceTypeCap(for placeType: String, providerKind: NativePlaceEvidenceKind) -> Double? {
+        guard providerKind == .aroundPOI || providerKind == .regeoPOI else { return nil }
+        guard let cap = knowledge().scoring.poiCaps.placeTypeCaps.first(where: { $0.placeType == placeType }) else {
+            return nil
+        }
+        switch providerKind {
+        case .aroundPOI:
+            return cap.aroundMax
+        case .regeoPOI:
+            return cap.regeoMax
+        case .regeoAOI, .regeoBuilding, .regeoNeighborhood:
+            return nil
+        }
     }
 
     private static func accuracyPenalty(for accuracy: Double) -> Double {
@@ -2706,6 +2835,22 @@ private struct NativePlaceDecision: Equatable, Sendable {
 private struct TypecodeEvidence: Equatable, Sendable {
     var placeType: String
     var strength: TypecodeStrength
+}
+
+private struct StructuralPlaceTypeChoice: Equatable, Sendable {
+    var placeType: String
+    var ambiguous: Bool
+    var terminalMatch: KeywordMatch?
+}
+
+private struct StructuralPlaceTypeScore: Equatable, Sendable {
+    var placeType: String
+    var score: Double
+    var firstOrder: Int
+    var hasProviderType: Bool
+    var hasTerminalEvidence: Bool
+    var hasStrongEvidence: Bool
+    var hasWeakEvidence: Bool
 }
 
 private struct TextKeywordEvidence: Equatable, Sendable {

@@ -128,7 +128,7 @@
       {
         "placeType": "住宅区",
         "tag": "residential_keyword",
-        "keywords": ["花园", "社区", "新村"]
+        "keywords": ["花园", "花苑", "社区", "新村", "新城", "公馆", "名邸", "府邸", "雅苑", "华庭", "豪庭", "别墅", "山庄", "庄园", "condo", "condominium", "condominiums", "apartments", "residences"]
       },
       {
         "placeType": "商场",
@@ -154,6 +154,13 @@
         "placeType": "户外",
         "tag": "outdoor_keyword",
         "keywords": ["步道"]
+      }
+    ],
+    "terminalRules": [
+      {
+        "placeType": "住宅区",
+        "tag": "residential_terminal_keyword",
+        "keywords": ["小区", "公寓", "家园", "花园", "花苑", "社区", "新村", "新城", "公馆", "名邸", "雅苑", "华庭", "豪庭", "府邸", "别墅", "山庄", "庄园", "家属院", "生活区", "apartments", "residences", "condos", "condominiums", "villas", "homes", "estates"]
       }
     ]
   },
@@ -289,6 +296,16 @@
       "staleSamplePenalty": 0.16,
       "maxConfidence": 0.9
     },
+    "structuralClassification": {
+      "providerType": 0.6,
+      "nameStrong": 0.42,
+      "typeStrong": 0.34,
+      "nameWeak": 0.18,
+      "typeWeak": 0.12,
+      "terminalKeywordBonus": 0.3,
+      "ambiguousMargin": 0.12,
+      "ambiguousPenalty": 0.06
+    },
     "poiDistanceScoreBands": [
       { "maxDistanceM": 50, "value": 0.42 },
       { "maxDistanceM": 100, "value": 0.34 },
@@ -339,7 +356,10 @@
       "nameOnly": 0.55,
       "typeOnly": 0.5,
       "regeoPOIMax": 0.62,
-      "aroundRegeoAgreement": 0.86
+      "aroundRegeoAgreement": 0.86,
+      "placeTypeCaps": [
+        { "placeType": "餐厅", "aroundMax": 0.62, "regeoMax": 0.56 }
+      ]
     },
     "fusion": {
       "secondWeight": 0.04,

@@ -62,6 +62,7 @@ struct AmapPlaceKnowledge: Decodable, Sendable {
         var dormitoryKeywords: [String]
         var strongRules: [KeywordRule]
         var weakRules: [KeywordRule]
+        var terminalRules: [KeywordRule]
     }
 
     struct KeywordRule: Decodable, Equatable, Sendable {
@@ -133,6 +134,17 @@ struct AmapPlaceKnowledge: Decodable, Sendable {
             var maxConfidence: Double
         }
 
+        struct StructuralClassification: Decodable, Sendable {
+            var providerType: Double
+            var nameStrong: Double
+            var typeStrong: Double
+            var nameWeak: Double
+            var typeWeak: Double
+            var terminalKeywordBonus: Double
+            var ambiguousMargin: Double
+            var ambiguousPenalty: Double
+        }
+
         struct ValueBand: Decodable, Sendable {
             var maxDistanceM: Double
             var value: Double
@@ -169,6 +181,12 @@ struct AmapPlaceKnowledge: Decodable, Sendable {
         }
 
         struct POICaps: Decodable, Sendable {
+            struct PlaceTypeCap: Decodable, Equatable, Sendable {
+                var placeType: String
+                var aroundMax: Double?
+                var regeoMax: Double?
+            }
+
             var strongNear: Double
             var strongFar: Double
             var mediumStrong: Double
@@ -179,6 +197,7 @@ struct AmapPlaceKnowledge: Decodable, Sendable {
             var typeOnly: Double
             var regeoPOIMax: Double
             var aroundRegeoAgreement: Double
+            var placeTypeCaps: [PlaceTypeCap]
         }
 
         struct Fusion: Decodable, Sendable {
@@ -202,6 +221,7 @@ struct AmapPlaceKnowledge: Decodable, Sendable {
         var regeoRadiusAccuracyMultiplier: Double
         var aroundRadiusMaxM: Double
         var structural: Structural
+        var structuralClassification: StructuralClassification
         var poiDistanceScoreBands: [ValueBand]
         var poiDistanceCapBands: [ValueBand]
         var accuracyPenaltyBands: [AccuracyPenaltyBand]
@@ -290,6 +310,7 @@ private extension AmapPlaceKnowledge {
         try validateQuery()
         try validateKeywordRules(keywords.strongRules, name: "keywords.strongRules")
         try validateKeywordRules(keywords.weakRules, name: "keywords.weakRules")
+        try validateKeywordRules(keywords.terminalRules, name: "keywords.terminalRules")
         try validateProviderTypeRules()
         try validateTypecodeRules()
         try validateSourceLabels()
@@ -391,6 +412,22 @@ private extension AmapPlaceKnowledge {
         try validateOrderedDistanceBands(scoring.poiDistanceScoreBands, name: "scoring.poiDistanceScoreBands")
         try validateOrderedDistanceBands(scoring.poiDistanceCapBands, name: "scoring.poiDistanceCapBands")
         try validateOrderedAccuracyBands(scoring.accuracyPenaltyBands, name: "scoring.accuracyPenaltyBands")
+        try validatePlaceTypeCaps()
+
+        let structuralClassification = scoring.structuralClassification
+        let structuralClassificationValues = [
+            structuralClassification.providerType,
+            structuralClassification.nameStrong,
+            structuralClassification.typeStrong,
+            structuralClassification.nameWeak,
+            structuralClassification.typeWeak,
+            structuralClassification.terminalKeywordBonus,
+            structuralClassification.ambiguousMargin,
+            structuralClassification.ambiguousPenalty
+        ]
+        guard structuralClassificationValues.allSatisfy({ $0 >= 0 && $0 <= 1 }) else {
+            throw AmapPlaceKnowledgeError.thresholdConflict("scoring.structuralClassification")
+        }
 
         let quality = scoring.quality
         guard quality.minimumAvailableConfidence >= 0,
@@ -403,6 +440,22 @@ private extension AmapPlaceKnowledge {
               scoring.structural.maxConfidence >= quality.exactOrGoodMinConfidence
         else {
             throw AmapPlaceKnowledgeError.thresholdConflict("scoring.quality")
+        }
+    }
+
+    func validatePlaceTypeCaps() throws {
+        var seen: Set<String> = []
+        for rule in scoring.poiCaps.placeTypeCaps {
+            try validatePlaceType(rule.placeType)
+            guard seen.insert(rule.placeType).inserted else {
+                throw AmapPlaceKnowledgeError.thresholdConflict("scoring.poiCaps.placeTypeCaps")
+            }
+            let caps = [rule.aroundMax, rule.regeoMax].compactMap { $0 }
+            guard !caps.isEmpty,
+                  caps.allSatisfy({ $0 > 0 && $0 <= 1 })
+            else {
+                throw AmapPlaceKnowledgeError.thresholdConflict("scoring.poiCaps.placeTypeCaps")
+            }
         }
     }
 
