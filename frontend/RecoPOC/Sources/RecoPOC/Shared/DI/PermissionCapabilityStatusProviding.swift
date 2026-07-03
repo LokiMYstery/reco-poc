@@ -769,9 +769,7 @@ public final class NativeCapablePermissionCapabilityStatusProvider:
     if let steps = HKObjectType.quantityType(forIdentifier: .stepCount) {
       types.insert(steps)
     }
-    if let activeEnergy = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned) {
-      types.insert(activeEnergy)
-    }
+    types.insert(HKObjectType.workoutType())
     if let sleep = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
       types.insert(sleep)
     }
