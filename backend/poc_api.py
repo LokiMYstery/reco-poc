@@ -84,6 +84,10 @@ class ContextPayload(BaseModel):
     gender: Optional[str] = None
     initial_need: Optional[str] = None
     initial_needs: Optional[List[str]] = None
+    questionnaire_snapshot: Optional[Any] = Field(
+        None,
+        description="Optional versioned questionnaire snapshot with need_taxonomy_version and 9-bit needs_mask.",
+    )
 
     class Config:
         extra = "allow"
@@ -118,6 +122,95 @@ def _normalize(scores: Dict[str, float]) -> Dict[str, float]:
     return {scene: (score - lo) / (hi - lo) for scene, score in scores.items()}
 
 
+INITIAL_NEED_TAXONOMY_VERSION = 1
+QUESTIONNAIRE_SNAPSHOT_SCHEMA_VERSION = 1
+INITIAL_NEEDS_BY_BIT = (
+    "学习/工作专注",
+    "睡眠/午休",
+    "放松/减压",
+    "运动/健身",
+    "通勤/出行",
+    "情绪陪伴",
+    "家庭/照护",
+    "游戏娱乐",
+    "阅读陪伴",
+)
+_KNOWN_INITIAL_NEEDS_MASK = (1 << len(INITIAL_NEEDS_BY_BIT)) - 1
+_INITIAL_NEED_BY_SINGLE_BIT = {1 << index: need for index, need in enumerate(INITIAL_NEEDS_BY_BIT)}
+
+
+def _non_negative_int(value: Any) -> Optional[int]:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            return None
+        parsed = int(value)
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            parsed = int(text, 10)
+        except ValueError:
+            return None
+    return parsed if parsed >= 0 else None
+
+
+def _decode_needs_mask(value: Any) -> Optional[List[str]]:
+    mask = _non_negative_int(value)
+    if mask is None:
+        return None
+    known_bits = mask & _KNOWN_INITIAL_NEEDS_MASK
+    return [
+        need
+        for index, need in enumerate(INITIAL_NEEDS_BY_BIT)
+        if known_bits & (1 << index)
+    ]
+
+
+def _decode_primary_need_bit(value: Any) -> Optional[str]:
+    bit = _non_negative_int(value)
+    if bit is None:
+        return None
+    return _INITIAL_NEED_BY_SINGLE_BIT.get(bit)
+
+
+def _apply_questionnaire_snapshot(data: Dict[str, Any]) -> None:
+    snapshot = data.get("questionnaire_snapshot")
+    if not isinstance(snapshot, dict):
+        return
+
+    schema_version = _non_negative_int(snapshot.get("schema_version", QUESTIONNAIRE_SNAPSHOT_SCHEMA_VERSION))
+    taxonomy_version = _non_negative_int(snapshot.get("need_taxonomy_version"))
+    if schema_version != QUESTIONNAIRE_SNAPSHOT_SCHEMA_VERSION or taxonomy_version != INITIAL_NEED_TAXONOMY_VERSION:
+        return
+
+    for field in ("questionnaire_available", "intent_available"):
+        if field in snapshot:
+            data[field] = snapshot[field]
+
+    if "needs_mask" in snapshot:
+        needs = _decode_needs_mask(snapshot.get("needs_mask"))
+        if needs is not None:
+            if needs:
+                data["initial_needs"] = needs
+            else:
+                data.pop("initial_needs", None)
+    else:
+        needs = None
+
+    primary_need = None
+    if "primary_need_bit" in snapshot:
+        primary_need = _decode_primary_need_bit(snapshot.get("primary_need_bit"))
+        if primary_need:
+            data["initial_need"] = primary_need
+    if needs is not None and not primary_need:
+        data.pop("initial_need", None)
+
+
 def _as_context_dict(context: ContextPayload) -> Dict[str, Any]:
     if hasattr(context, "model_dump"):
         data = context.model_dump(exclude_none=True)
@@ -150,6 +243,7 @@ def _as_context_dict(context: ContextPayload) -> Dict[str, Any]:
         data["longitude"] = data["lon"]
     if "location_accuracy_m" not in data and "horizontal_accuracy_m" in data:
         data["location_accuracy_m"] = data["horizontal_accuracy_m"]
+    _apply_questionnaire_snapshot(data)
     if not data.get("initial_need") and isinstance(data.get("initial_needs"), list):
         data["initial_need"] = "、".join(str(item) for item in data["initial_needs"] if item)
     return data
