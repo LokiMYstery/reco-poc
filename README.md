@@ -364,6 +364,7 @@ POI 请求归属：
 | `app_event_available` | int | `1` 可用，`0` 不可用 |
 | `initial_need` | string | 问卷主需求 |
 | `initial_needs` | array | 问卷多选需求 |
+| `questionnaire_snapshot` | object | 问卷快照；后端会解码为 `initial_need` / `initial_needs` |
 | `user_tag` | string | 冷启动弱先验 |
 
 当前实际推荐链路不使用日历字段。POC backend schema 里仍保留 `calendar_title`、`calendar_available`，但生产第一版不要请求日历权限，也不要采集或上传这两个字段。
@@ -373,6 +374,74 @@ POI 请求归属：
 - 权限未授权、设备不支持、采集失败时，优先传 `*_available = 0`。
 - 后端应把 unavailable 当 missing，不当负向证据。
 - 不建议用假值补齐，例如没有心率时不要传 `heart_rate_zone = 静息`。
+
+### 6.4 问卷 snapshot decoder
+
+生产链路可以不在每次推荐请求里拉问卷表，而是在用户完成或更新问卷后生成一个稳定快照，并随用户画像或冷启动上下文进入推荐。当前后端支持 `questionnaire_snapshot`，会在 context normalization 阶段把它解码成现有算法可读的 `initial_need` / `initial_needs`。
+
+示例：
+
+```json
+{
+  "questionnaire_snapshot": {
+    "schema_version": 1,
+    "need_taxonomy_version": 1,
+    "primary_need_bit": 2,
+    "needs_mask": 6,
+    "questionnaire_available": 1,
+    "intent_available": 1
+  }
+}
+```
+
+`needs_mask` 是 9-bit bitmask，语义固定为 `0 = 未选中`、`1 = 选中`。每个元需求占一个固定 bit 位：
+
+| bit | 单项 bit 值 | 需求 |
+|---:|---:|---|
+| 0 | `1` | 学习/工作专注 |
+| 1 | `2` | 睡眠/午休 |
+| 2 | `4` | 放松/减压 |
+| 3 | `8` | 运动/健身 |
+| 4 | `16` | 通勤/出行 |
+| 5 | `32` | 情绪陪伴 |
+| 6 | `64` | 家庭/照护 |
+| 7 | `128` | 游戏娱乐 |
+| 8 | `256` | 阅读陪伴 |
+
+编码方式是 bitwise OR，不是普通枚举 ID 相加。比如用户选择 `睡眠/午休` 和 `放松/减压`：
+
+```text
+needs_mask = (1 << 1) | (1 << 2) = 2 | 4 = 6
+```
+
+后端解码结果：
+
+```json
+{
+  "initial_needs": ["睡眠/午休", "放松/减压"]
+}
+```
+
+`primary_need_bit` 表示主需求，必须是单个合法 bit 值。例如 `primary_need_bit = 2` 会解码成：
+
+```json
+{
+  "initial_need": "睡眠/午休"
+}
+```
+
+如果 snapshot 里没有合法 `primary_need_bit`，但 `needs_mask` 解出了多个需求，后端会沿用旧兼容逻辑，把多选需求拼成一个 `initial_need` 字符串，例如：
+
+```text
+睡眠/午休、放松/减压
+```
+
+兼容规则：
+
+- `need_taxonomy_version = 1` 是当前唯一支持版本。
+- `needs_mask = 0` 表示没有 initial needs，不会生成 `initial_need` / `initial_needs`。
+- snapshot 存在且版本合法时，优先派生 canonical 字段；旧格式 `initial_need` / `initial_needs` 仍可继续直接传。
+- 非整数 mask、非法 primary bit、未知版本会被保守忽略，不应让推荐请求失败。
 
 ## 7. 反馈接口 contract
 
